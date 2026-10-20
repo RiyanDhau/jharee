@@ -1,4 +1,3 @@
-
 def get_alive_players(players):
     return [player for player in players if player.alive]
 

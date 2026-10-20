@@ -1,3 +1,4 @@
+from getpass import getpass #to hide the input of coordinates from other players
 
 from player import Player, generate_position, MAP_SIZE
 from game_logic import (
@@ -11,12 +12,13 @@ from game_logic import (
 def get_coordinate(axis):
     while True:
         try:
-            coordinate = int(input(f"Enter target {axis} (0-9): "))
+            # getpass hides what is typed so the other players can't see it
+            coordinate = int(getpass(f"Enter target {axis} (0-{MAP_SIZE - 1}): "))
 
             if 0 <= coordinate < MAP_SIZE:
                 return coordinate
             else:
-                print("Invalid coordinate! Enter a number from 0 to 9.")
+                print(f"Invalid coordinate! Enter a number from 0 to {MAP_SIZE - 1}.")
 
         except ValueError:
             print("Invalid input! Please enter a whole number.")
@@ -105,10 +107,10 @@ def start_game():
         for player in alive_players:
             print(f"\n{player.name}, choose your laser target!")
 
-            # inputing x coordinate
+            # inputing x coordinate (hidden)
             x = get_coordinate("X")
 
-            # inputing y coordinate
+            # inputing y coordinate (hidden)
             y = get_coordinate("Y")
 
             # storing both coordinates as a tuple
@@ -117,6 +119,12 @@ def start_game():
             print(f"{player.name}'s target is locked in!")
 
         print("\nAll lasers aimed! Targets are locked in.")
+
+        # reveal where everyone was aiming
+        print("\n--- LASERS REVEALED ---")
+
+        for player in alive_players:
+            print(f"{player.name} aimed at {player.laser_target}")
 
         # check who got hit before eliminating anyone
         players_hit = get_players_hit(alive_players)

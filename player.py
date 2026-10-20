@@ -1,4 +1,3 @@
-
 import random  # gives python access to random number generation functions
 
 # map size: 10 x 10
