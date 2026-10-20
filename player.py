@@ -16,8 +16,31 @@ def generate_position():
     y = random.randint(0, MAP_SIZE - 1)
     return (x, y)
 
+def get_coordinate(axis):
+    while True:
+        try:
+            coordinate = int(input(f"Enter target {axis} (0-9): "))
+
+            if 0 <= coordinate < MAP_SIZE:
+                return coordinate
+            else:
+                print("Invalid coordinate! Enter a number from 0 to 9.")
+
+        except ValueError:
+            print("Invalid input! Please enter a whole number.")
+
 #inputing the number of players
-num_players = int(input("How many players are playing? "))
+while True:
+    try:
+        num_players = int(input("How many players are playing? "))
+
+        if num_players >= 2:
+            break
+        else:
+            print("You need at least 2 players to play!")
+
+    except ValueError:
+        print("Invalid input! Please enter a whole number.")
 
 players = []  #empty list to hold player objects
 occupied_positions = set()  #empty set to track occupied positions
@@ -43,47 +66,80 @@ for player in players:
 
 print(f"\n{len(players)} players have joined!")
 
-#each player chooses where their laser is aiming
-print("\n--- LASER AIMING ---")
+round_number = 1
 
-for player in players:
-    print(f"\n{player.name}, choose your laser target!")
+#repeat the game until there is a winner or everyone is eliminated
+while True:
 
-    #inputing x coordinate
-    x = int(input("Enter target X (0-9): "))
+    #check how many players are still alive
+    alive_players = [player for player in players if player.alive]
 
-    #inputing y coordinate
-    y = int(input("Enter target Y (0-9): "))
+    #stop if there are no players left
+    if len(alive_players) == 0:
+        print("\nEveryone got eliminated! Nobody wins!")
+        break
 
-    #storing both coordinates as a tuple
-    player.laser_target = (x, y)
+    #stop if only one player remains
+    if len(alive_players) == 1:
+        print(f"\n🏆 {alive_players[0].name} is the winner!")
+        break
 
-    #print where the player is aiming
-    print(f"{player.name} is aiming at {player.laser_target}")
+    print(f"\n========== ROUND {round_number} ==========")
 
-print("\nAll lasers aimed! Targets are locked in.")
-#checking who got hit
-players_hit = []
+    #reset laser targets before each new round
+    for player in players:
+        player.laser_target = None
 
-for shooter in players:
-    for target_player in players:
+    #each player chooses where their laser is aiming
+    print("\n--- LASER AIMING ---")
 
-        #a player cannot hit themselves
-        if shooter != target_player:
+    for player in players:
 
-            #check whether the laser hits another player
-            if shooter.laser_target == target_player.position:
-                players_hit.append(target_player)
+        #skip players who have been eliminated
+        if not player.alive:
+            continue
 
-#eliminate players only after checking all lasers
-for player in players_hit:
-    player.alive = False
+        print(f"\n{player.name}, choose your laser target!")
 
-#print the results
-print("\n--- RESULTS ---")
+        #inputing x coordinate
+        x = get_coordinate("X")
 
-for player in players:
-    if player.alive:
-        print(f"{player.name} survived!")
-    else:
-        print(f"{player.name} got eliminated!")
+        #inputing y coordinate
+        y = get_coordinate("Y")
+
+        #storing both coordinates as a tuple
+        player.laser_target = (x, y)
+
+        #print where the player is aiming
+        print(f"{player.name}'s target is locked in!")
+
+    print("\nAll lasers aimed! Targets are locked in.")
+
+    #checking who got hit
+    players_hit = set()
+
+    for shooter in alive_players:
+        for target_player in alive_players:
+
+            #a player cannot hit themselves
+            if shooter != target_player:
+
+                #check whether the laser hits another player
+                if shooter.laser_target == target_player.position:
+                    players_hit.add(target_player)
+
+    #eliminate players only after checking all lasers
+    for player in players_hit:
+        player.alive = False
+
+    #print the results
+    print("\n--- RESULTS ---")
+
+    for player in players:
+        if player.alive:
+            print(f"{player.name} survived!")
+        else:
+            print(f"{player.name} got eliminated!")
+
+    #move to the next round
+    round_number += 1
