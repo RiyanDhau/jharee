@@ -4,7 +4,7 @@ def get_alive_players(players):
 
 
 def get_players_hit(players):
-    #checking who got hit
+    # checking who got hit
     players_hit = set()
 
     for shooter in players:
@@ -13,10 +13,10 @@ def get_players_hit(players):
 
         for target_player in players:
 
-            #a player cannot hit themselves
+            # a player cannot hit themselves
             if shooter != target_player and target_player.alive:
 
-                #check whether the laser hits another player
+                # check whether the laser hits another player
                 if shooter.laser_target == target_player.position:
                     players_hit.add(target_player)
 
@@ -24,7 +24,7 @@ def get_players_hit(players):
 
 
 def eliminate_players(players_hit):
-    #eliminate players only after checking all lasers
+    # eliminate players only after checking all lasers
     for player in players_hit:
         player.alive = False
 
