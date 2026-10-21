@@ -1,7 +1,7 @@
 def get_alive_players(players):
     return [player for player in players if player.alive]
 
-
+# Check which players are hit by the lasers
 def get_players_hit(players):
     # checking who got hit
     players_hit = set()
