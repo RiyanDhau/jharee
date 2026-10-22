@@ -13,20 +13,22 @@ def get_laser_path(start, target):
     dx = abs(x2 - x1)
     dy = abs(y2 - y1)
 
+#to determine whether the next grid step moves in the positive or negative direction.
     sx = 1 if x1 < x2 else -1
     sy = 1 if y1 < y2 else -1
 
-    error = dx - dy
+    error = dx - dy #helps algorithm whether the next step should move horizontally, vertically, or both.
 
     while True:
-        path.append((x1, y1))
+        path.append((x1, y1)) #adds the laser's current position to its path.
 
-        if (x1, y1) == (x2, y2):
+        if (x1, y1) == (x2, y2): #checks whether the laser has reached its target.
             break
 
-        double_error = 2 * error
+        double_error = 2 * error #doubles the running error so we can compare it with the horizontal and vertical distances.
 
-        if double_error > -dy:
+     #decides whether to move horizontally or vertically based on the error value.
+        if double_error > -dy: 
             error -= dy
             x1 += sx
 
