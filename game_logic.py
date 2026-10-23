@@ -79,3 +79,4 @@ def get_winner(players):
         return alive_players[0]
 
     return None
+#needs to be updated bcs we need to use the cursor type shit 
