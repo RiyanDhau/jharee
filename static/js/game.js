@@ -1,4 +1,3 @@
-// Browser side of Pixel Pop: Laser Duel.
 // All secret information stays on the server:
 // this page only knows your own position until the reveal arrives.
 
