@@ -16,8 +16,7 @@ def get_laser_path(start, target):
     sx = 1 if x1 < x2 else -1
     sy = 1 if y1 < y2 else -1
 
-    error = dx - dy #helps algorithm whether the next step should move horizontally, vertically, or both.
-
+    error = dx - dy 
     while True:
         path.append((x1, y1)) #adds the laser's current position to its path.
 
