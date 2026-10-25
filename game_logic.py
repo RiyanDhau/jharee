@@ -13,7 +13,6 @@ def get_laser_path(start, target):
     dx = abs(x2 - x1)
     dy = abs(y2 - y1)
 
-#to determine whether the next grid step moves in the positive or negative direction.
     sx = 1 if x1 < x2 else -1
     sy = 1 if y1 < y2 else -1
 
