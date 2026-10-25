@@ -4,7 +4,7 @@ def get_alive_players(players):
 
 
 def get_laser_path(start, target):
-    # Find the grid cells the laser passes through
+   
     x1, y1 = start
     x2, y2 = target
 
