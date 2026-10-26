@@ -65,7 +65,7 @@ def get_players_hit(players):
 
 
 def eliminate_players(players_hit):
-    # Eliminate players only after checking all lasers
+
     for player in players_hit:
         player.alive = False
 
