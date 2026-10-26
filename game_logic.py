@@ -38,7 +38,7 @@ def get_laser_path(start, target):
 
 
 def get_players_hit(players):
-    # Check which players are hit by the lasers
+  
     players_hit = set()
 
     for shooter in players:
