@@ -34,3 +34,25 @@ button:focus-visible{outline:3px solid #fff;outline-offset:3px}
 button.go{background:var(--pink);box-shadow:0 5px 0 #a0207f}
 small{font-size:9px;color:var(--mute);text-align:center;line-height:1.8;max-width:760px}
 @media (prefers-reduced-motion:reduce){button:active{transform:none}}
+
+/* message bar above the arena, and the players list below it */
+#top{width:100%;display:flex;gap:10px}
+#top #msg{flex:1 1 auto;width:auto}
+#timer{flex:none;min-width:84px;font-size:16px;color:var(--ink)}
+#timer:empty{display:none}
+#timer.low{color:#ff6b86;border-color:#ff6b86}
+.roster{width:100%;max-height:300px;overflow-y:auto;border:3px solid var(--mute);padding:14px;font-size:11px;display:flex;flex-direction:column;gap:10px}
+.rtitle{color:var(--yel);font-size:12px}
+.rrow{display:flex;align-items:center;gap:10px}
+.dot{width:14px;height:14px;flex:none;border:2px solid #14062e;box-shadow:0 0 0 2px var(--ink)}
+.rname{flex:1;overflow-wrap:anywhere}
+.rtag{color:var(--mute);font-size:10px}
+.rrow.out{opacity:.55}
+.rrow.out .rname{text-decoration:line-through}
+.rrow.out .rtag{color:#ff6b86}
+
+/* game over screen on top of the arena */
+.end{position:absolute;inset:4px;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;
+gap:22px;background:rgba(10,3,25,.82);text-align:center;padding:12px}
+#endText{font-size:clamp(20px,6vw,44px);line-height:1.3;color:var(--yel);text-shadow:3px 3px 0 var(--pink)}
+.rtag.ready{color:#5dff9c}
