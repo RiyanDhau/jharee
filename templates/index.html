@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pixel Pop: Laser Duel</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<h1>PIXEL POP<br>LASER DUEL</h1>
+
+<!-- lobby: create a room or join with a code -->
+<section id="lobby" class="panel">
+  <input id="name" maxlength="12" placeholder="Your name" aria-label="Your name" autocomplete="off">
+  <p>How many players? (2 to 8)</p>
+  <input id="players" type="number" min="2" max="8" value="2" aria-label="Number of players">
+  <button id="create" class="go">CREATE ROOM</button>
+  <p>or join a friend</p>
+  <input id="code" maxlength="4" placeholder="ROOM CODE" aria-label="Room code" autocomplete="off">
+  <button id="join">JOIN</button>
+  <p id="lobbyErr" role="alert"></p>
+</section>
+
+<!-- game screen -->
+<section id="game" hidden>
+  <div class="wrap"><canvas id="c" width="320" height="180"></canvas></div>
+  <div id="hud"><div class="card" id="msg"></div><div class="card" id="score"></div></div>
+  <div class="btns" id="btns"></div>
+</section>
+
+<small>Top view, same level. While you aim you cannot see the other player: click where your laser should point, then lock in. Both lasers fire at once and stop where you clicked. Enter locks in.</small>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/game.js') }}"></script>
+</body>
+</html>
