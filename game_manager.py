@@ -1,167 +1,340 @@
-from getpass import getpass #to hide the input of coordinates from other players
-
-from player import Player, generate_position, MAP_SIZE
+import threading
+from constants import (
+    PLACE_SECONDS, AIM_SECONDS, MIN_PLAYERS, MAX_PLAYERS,
+    ARENA_W, ARENA_H, SHRINK_FACTOR, MIN_ARENA_SCALE,
+)
+from player import Player #imports the Player class
 from game_logic import (
     get_alive_players,
     get_players_hit,
     eliminate_players,
-    get_winner
+    get_winner,
+    random_position,
+    validate_position,
+    validate_target,
 )
+class GameManager:
+    def __init__(self, code):
+        self.code = code
+        self.players = []
+        self.phase = "waiting"        # waiting -> playing -> reveal -> playing ... -> over
+        self.phase_id = 0             # changes on every phase change so old timers know they are stale
+        self.round_number = 0
+        self.shrink_level = 0         # how many rounds in a row passed with nobody hit
+        self.ready = set()            # sids that clicked READY
+        self.lock = threading.RLock() # several players can act at the same moment
 
+    def _set_phase(self, phase):
+        self.phase = phase
+        self.phase_id += 1
 
-def get_coordinate(axis):
-    while True:
-        try:
-            # getpass hides what is typed so the other players can't see it
-            coordinate = int(getpass(f"Enter target {axis} (0-{MAP_SIZE - 1}): "))
+    # ---------- the arena ----------
+    def arena(self):
+        # the playable area (x0, y0, x1, y1), centred, getting smaller every time nobody gets hit
+        scale = max(MIN_ARENA_SCALE, SHRINK_FACTOR ** self.shrink_level)
+        w, h = ARENA_W * scale, ARENA_H * scale
+        x0, y0 = (ARENA_W - w) / 2, (ARENA_H - h) / 2
+        return (round(x0, 1), round(y0, 1), round(x0 + w, 1), round(y0 + h, 1))
 
-            if 0 <= coordinate < MAP_SIZE:
-                return coordinate
-            else:
-                print(f"Invalid coordinate! Enter a number from 0 to {MAP_SIZE - 1}.")
+    # ---------- players ----------
+    def is_full(self):
+        return len(self.players) >= MAX_PLAYERS
 
-        except ValueError:
-            print("Invalid input! Please enter a whole number.")
+    def is_empty(self):
+        return len(self.players) == 0
 
+    def accepting_players(self):
+        # people can only join while the room is still in the lobby
+        return self.phase == "waiting" and not self.is_full()
 
-def start_game():
-    # inputing the number of players
-    while True:
-        try:
-            num_players = int(input("How many players are playing? "))
+    def get_player(self, sid):
+        for player in self.players:
+            if player.sid == sid:
+                return player
+        return None
 
-            if 2 <= num_players <= MAP_SIZE * MAP_SIZE:
-                break
-            else:
-                print(f"Enter a number between 2 and {MAP_SIZE * MAP_SIZE}!")
+    def add_player(self, sid, name):
+        with self.lock:
+            if not self.accepting_players():
+                return None
 
-        except ValueError:
-            print("Invalid input! Please enter a whole number.")
+            taken = {player.slot for player in self.players}
+            slot = 0
+            while slot in taken:
+                slot += 1
 
-    # inputing the number of rounds
-    while True:
-        try:
-            max_rounds = int(input("How many rounds do you want to play? "))
+            player = Player(sid, name, slot)
+            self.players.append(player)
+            self.players.sort(key=lambda p: p.slot)
+            return player
 
-            if max_rounds >= 1:
-                break
-            else:
-                print("You need to play at least 1 round!")
+    def _lobby_ready(self):
+        return len(self.players) >= MIN_PLAYERS and all(p.sid in self.ready for p in self.players)
 
-        except ValueError:
-            print("Invalid input! Please enter a whole number.")
+    def _end_game(self):
+        # the game is over: the last player alive (if any) wins
+        alive = get_alive_players(self.players)
+        winner = alive[0] if len(alive) == 1 else None
+        self._set_phase("over")
+        return {
+            "winner": winner.slot if winner else None,
+            "winner_name": winner.name if winner else None,
+        }
 
-    players = []  # empty list to hold player objects
-    occupied_positions = set()  # track occupied positions
+    def remove_player(self, sid):
+        # returns (result, action, over):
+        #   result: a round result to reveal right now, or None
+        #   action: "start" or "advance" when the next round should begin right now, or None
+        #   over:   the winner info when the game just ended because people left, or None
+        with self.lock:
+            leaver = self.get_player(sid)
+            was_alive = leaver is not None and leaver.alive
 
-    # create players and assign unique random positions
-    for i in range(num_players):
-        name = input(f"Enter Player {i + 1}'s name: ")
+            self.players = [p for p in self.players if p.sid != sid]
+            self.ready.discard(sid)
 
-        position = generate_position()
+            if self.phase == "waiting":
+                # everyone who is left may already be ready
+                if self._lobby_ready():
+                    self.start_match()
+                    self.start_round()
+                    return None, "start", None
+                return None, None, None
 
-        while position in occupied_positions:
-            position = generate_position()
+            if self.phase == "over":
+                return None, None, None
 
-        occupied_positions.add(position)
+            # a game is running
+            if len(self.players) < MIN_PLAYERS:
+                return None, None, self._end_game()
 
-        player = Player(name, position)
-        players.append(player)
+            if self.phase == "playing":
+                if was_alive:
+                    # the round may be finished now that this player is gone
+                    _, fired, total = self.lock_counts()
+                    if total <= 1 or fired == total:
+                        return self.force_resolve(self.phase_id), None, None
+                return None, None, None
 
-    print("\n--- GAME START ---")
+            if self.phase == "reveal":
+                if len(get_alive_players(self.players)) <= 1:
+                    return None, None, self._end_game()
+                return None, ("advance" if self.check_advance() else None), None
 
-    for player in players:
-        print(f"{player.name} spawned at {player.position}")
+            return None, None, None
 
-    print(f"\n{len(players)} players have joined!")
-    print(f"The game will last up to {max_rounds} rounds.")
+    # ---------- ready ----------
+    def toggle_ready(self, sid):
+        # returns "start" (the game begins), "advance" (the next round begins) or None
+        with self.lock:
+            player = self.get_player(sid)
+            if player is None:
+                return None
 
-    round_number = 1
+            if self.phase == "waiting":
+                if sid in self.ready:
+                    self.ready.discard(sid)
+                else:
+                    self.ready.add(sid)
 
-    # repeat the game until the chosen rounds are completed
-    while round_number <= max_rounds:
+                if self._lobby_ready():
+                    self.start_match()
+                    self.start_round()
+                    return "start"
+                return None
 
-        # check how many players are still alive
-        alive_players = get_alive_players(players)
+            if self.phase == "reveal":
+                if not player.alive:
+                    return None   # knocked-out players don't need to click
 
-        # stop if there are no players left
-        if len(alive_players) == 0:
-            print("\nEveryone got eliminated! Nobody wins!")
-            break
+                self.ready.add(sid)
+                return "advance" if self.check_advance() else None
 
-        # stop if only one player remains
-        if len(alive_players) == 1:
-            winner = get_winner(players)
-            print(f"\n🏆 {winner.name} is the winner!")
-            break
+            return None
 
-        print(f"\n========== ROUND {round_number} ==========")
+    def check_advance(self):
+        # returns True (once) when every survivor is ready for the next round
+        with self.lock:
+            alive = get_alive_players(self.players)
+            if self.phase == "reveal" and alive and all(p.sid in self.ready for p in alive):
+                self._set_phase("starting")   # stops a double click from advancing twice
+                return True
+            return False
 
-        # reset laser targets before each new round
-        for player in players:
-            player.laser_target = None
+    # ---------- the game and its rounds ----------
+    def start_match(self):
+        with self.lock:
+            for player in self.players:
+                player.alive = True
+                player.position = None
+                player.laser_target = None
 
-        # each living player chooses where their laser is aiming
-        print("\n--- LASER AIMING ---")
+            self.round_number = 0
+            self.shrink_level = 0
 
-        for player in alive_players:
-            print(f"\n{player.name}, choose your laser target!")
+    def start_round(self):
+        with self.lock:
+            self.round_number += 1
+            self.ready.clear()
 
-            # inputing x coordinate (hidden)
-            x = get_coordinate("X")
+            # nobody has a position or a target yet
+            for player in self.players:
+                player.position = None
+                player.laser_target = None
 
-            # inputing y coordinate (hidden)
-            y = get_coordinate("Y")
+            self._set_phase("playing")
 
-            # storing both coordinates as a tuple
-            player.laser_target = (x, y)
+    def round_state_for(self, player):
+        # no positions in here: nobody knows where anyone stands until the reveal
+        return {
+            "round": self.round_number,
+            "slot": player.slot,
+            "alive": player.alive,
+            "alive_count": len(get_alive_players(self.players)),
+            "alive_slots": [p.slot for p in get_alive_players(self.players)],
+            "ready_slots": [],
+            "arena": list(self.arena()),
+            "place_seconds": PLACE_SECONDS,
+            "round_seconds": PLACE_SECONDS + AIM_SECONDS,
+        }
 
-            print(f"{player.name}'s target is locked in!")
+    def lobby_state(self):
+        return {
+            "code": self.code,
+            "phase": self.phase,
+            "players": [{"name": p.name, "slot": p.slot} for p in self.players],
+            "ready_slots": [p.slot for p in self.players if p.sid in self.ready],
+        }
 
-        print("\nAll lasers aimed! Targets are locked in.")
+    # ---------- placing and aiming (each player at their own pace) ----------
+    def lock_counts(self):
+        # how many alive players have placed and how many have fired
+        alive = get_alive_players(self.players)
+        placed = sum(1 for p in alive if p.position is not None)
+        fired = sum(1 for p in alive if p.laser_target is not None)
+        return placed, fired, len(alive)
 
-        # reveal where everyone was aiming
-        print("\n--- LASERS REVEALED ---")
+    def submit_position(self, sid, x, y):
+        # returns (ok, error)
+        with self.lock:
+            if self.phase != "playing":
+                return False, "You can't place yourself right now."
 
-        for player in alive_players:
-            print(f"{player.name} aimed at {player.laser_target}")
+            player = self.get_player(sid)
+            if player is None:
+                return False, "You are not in this room."
 
-        # check who got hit before eliminating anyone
-        players_hit = get_players_hit(alive_players)
+            if not player.alive:
+                return False, "You are out of this game."
 
-        # eliminate players only after checking all lasers
+            if player.position is not None:
+                return False, "You already chose your spot."
+
+            position, error = validate_position(x, y, self.arena())
+            if error:
+                return False, error
+
+            player.position = position
+            return True, None
+
+    def submit_target(self, sid, x, y):
+        # returns (ok, error, result). result is only set for the call that finishes the round.
+        with self.lock:
+            if self.phase != "playing":
+                return False, "You can't aim right now.", None
+
+            player = self.get_player(sid)
+            if player is None:
+                return False, "You are not in this room.", None
+
+            if not player.alive:
+                return False, "You are out of this game.", None
+
+            if player.position is None:
+                return False, "Choose where to stand first.", None
+
+            if player.laser_target is not None:
+                return False, "You already fired.", None
+
+            target, error = validate_target(player, x, y, self.arena())
+            if error:
+                return False, error, None
+
+            player.laser_target = target
+
+            _, fired, total = self.lock_counts()
+            if fired == total:
+                return True, None, self.resolve_round()
+
+            return True, None, None
+
+    # ---------- running out of time ----------
+    def force_place(self, phase_id):
+        # placing time is up: anyone who hasn't chosen a spot gets a random one.
+        # returns the list of (player, position) that were assigned, or None if this timer is stale
+        with self.lock:
+            if self.phase != "playing" or phase_id != self.phase_id:
+                return None
+
+            assigned = []
+            for player in get_alive_players(self.players):
+                if player.position is None:
+                    player.position = random_position(self.arena())
+                    assigned.append((player, player.position))
+
+            return assigned
+
+    def force_resolve(self, phase_id):
+        # the round's time is up: anyone who hasn't fired doesn't shoot this round.
+        # returns the round result, or None if this timer is stale
+        with self.lock:
+            if self.phase != "playing" or phase_id != self.phase_id:
+                return None
+
+            for player in get_alive_players(self.players):
+                if player.position is None:
+                    player.position = random_position(self.arena())
+                if player.laser_target is None:
+                    player.laser_target = player.position   # a zero-length laser hits nobody
+
+            return self.resolve_round()
+
+    def resolve_round(self):
+        # check every laser first, then eliminate (so players can hit each other)
+        alive_before = get_alive_players(self.players)
+        players_hit = get_players_hit(alive_before)
         eliminate_players(players_hit)
 
-        # print the results
-        print("\n--- RESULTS ---")
+        alive_after = get_alive_players(self.players)
+        game_over = len(alive_after) <= 1
 
-        for player in players:
-            if player in players_hit:
-                print(f"{player.name} got eliminated!")
-            elif player.alive:
-                print(f"{player.name} survived!")
-            else:
-                print(f"{player.name} was already eliminated!")
+        # nobody got hit and the game goes on: the room gets smaller
+        shrinking = (not players_hit) and (not game_over)
+        if shrinking:
+            self.shrink_level += 1
 
-        # move to the next round
-        round_number += 1
+        winner = get_winner(self.players) if game_over else None
+        self._set_phase("over" if game_over else "reveal")
 
-    # display the final outcome after the chosen rounds
-    alive_players = get_alive_players(players)
-
-    print("\n========== FINAL RESULTS ==========")
-
-    if len(alive_players) == 1:
-        print(f"🏆 {alive_players[0].name} is the winner!")
-    elif len(alive_players) == 0:
-        print("Everyone got eliminated! Nobody wins!")
-    else:
-        print("The chosen number of rounds is over!")
-        print("Players who survived:")
-
-        for player in alive_players:
-            print(f"- {player.name}")
-
-
-if __name__ == "__main__":
-    start_game()
+        # now the secret positions and targets become public
+        return {
+            "round": self.round_number,
+            "match_over": game_over,
+            "winner": winner.slot if winner else None,
+            "winner_name": winner.name if winner else None,
+            "shrinking": shrinking,
+            "alive_count": len(alive_after),
+            "alive_slots": [p.slot for p in alive_after],
+            "players": [
+                {
+                    "slot": p.slot,
+                    "name": p.name,
+                    "x": p.position[0],
+                    "y": p.position[1],
+                    "tx": p.laser_target[0],
+                    "ty": p.laser_target[1],
+                    "hit": p in players_hit,
+                }
+                for p in alive_before
+            ],
+        }
