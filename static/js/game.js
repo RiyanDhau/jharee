@@ -1,14 +1,8 @@
-// All secret information stays on the server:
-// this page only knows your own position until the reveal arrives.
+// Browser side of Pixel Pop: Laser Duel. All secret information stays on the server:
+// this page only ever knows your own position until the reveal arrives.
 
-// Defines the virtual arena's dimensions in pixels.
-// W = width, H = height, TILE = size of each floor tile.
-const W = 320, H = 180, TILE = 20;
-
-// Defines the body and laser-beam colors for each player slot.
-// The slot number determines which color a player uses.
-// The modulo operator (%) lets colors repeat if there are more players than colors.
-const COLORS = [
+const W = 320, H = 180, TILE = 20, MIN_AIM = 10, MARGIN = 10;
+const BASE_COLORS = [
   { body: "#3b8cff", beam: "#2dc4ff" },   // slot 0: blue
   { body: "#ff3b6b", beam: "#ff2d55" },   // slot 1: red
   { body: "#3ddc84", beam: "#5dff9c" },   // slot 2: green
@@ -18,685 +12,435 @@ const COLORS = [
   { body: "#ff8a3d", beam: "#ffb06b" },   // slot 6: orange
   { body: "#ff7ad9", beam: "#ffa6e8" },   // slot 7: pink
 ];
-
-// Defines the player's pixel-art sprite.
-// Each character represents one small square:
-// X = player's body, W = white pixels, K = dark pixels, . = transparent space.
+function colorFor(slot) {
+  if (slot < BASE_COLORS.length) return BASE_COLORS[slot];
+  const hue = Math.round((slot * 137.508) % 360);   // spreads the extra players around the colour wheel
+  return { body: `hsl(${hue}, 70%, 60%)`, beam: `hsl(${hue}, 100%, 72%)` };
+}
 const SPR = [".XXXXXX.", "XXXXXXXX", "XWKXXWKX", "XWWXXWWX", "XXXXXXXX", "XXXXXXXX", ".XX..XX.", ".XX..XX."];
+const TOUCH = window.matchMedia("(pointer: coarse)").matches;   // phones have no Enter key
 
-// A shortcut for finding an HTML element using its ID.
-// For example, $("msg") finds the element whose id is "msg".
 const $ = (id) => document.getElementById(id);
-
-// Finds the game canvas and gets its 2D drawing context.
-// cv = the canvas element; ctx = the tools used to draw on that canvas.
 const cv = $("c"), ctx = cv.getContext("2d");
-
-// Connects this browser to the server through Socket.IO.
-// This allows the browser and Python backend to exchange events.
 const socket = io();
 
-// ---------- game state ----------
-
-// Stores the current stage of the game.
-// lobby = creating/joining a room; waiting = waiting for players;
-// aim = choosing a target; locked = shot submitted;
-// spectate = watching after elimination; fire = laser animation;
-// result = displaying the outcome.
+// phase: lobby, waiting, place, aim, locked, spectate, fire, result, over
 let phase = "lobby";
-
-// Stores this player's slot, the maximum number of players,
-// their names, current scores, and scores received for the next result.
-// Arrays are used because the game can have more than two players.
-let slot = 0, maxPlayers = 2, names = ["P1", "P2"], wins = [0, 0], pendingWins = [0, 0];
-
-// Tracks whether this player is alive and whether they can start the next round.
-let isAlive = true, needsNext = false;
-
-// myPos = this player's own position in the arena.
-// target = the coordinates they selected for their laser shot.
-// mouse = the current mouse position inside the arena.
-let myPos = null, target = null, mouse = null;
-
-// reveal = round information received from the server after shots are revealed.
-// t0 = starting time of the laser animation.
-// resolved = prevents the hit animation from being processed more than once.
-// parts = explosion particles; shake = how strongly the screen shakes.
+let slot = 0, roomCode = "", names = [], joined = [], readySlots = [], aliveSlots = null, winnerSlot = null;
+let isAlive = true, canReady = false, iAmReady = false;
+let arenaFrom = [0, 0, W, H], arenaTo = [0, 0, W, H], arenaT0 = -1e9;   // the playable area, shrinks over time
+let pendingPos = null, myPos = null, target = null, mouse = null;
 let reveal = null, t0 = 0, resolved = false, parts = [], shake = 0;
+let placeDeadline = null, roundDeadline = null, lastSec = -1;   // countdowns
 
+// ---------- the shrinking arena ----------
+const area = (a) => (a[2] - a[0]) * (a[3] - a[1]);
+function curArena(now) {
+  const k = Math.min(1, (now - arenaT0) / 700);
+  const e = 1 - Math.pow(1 - k, 3);
+  return arenaFrom.map((v, i) => v + (arenaTo[i] - v) * e);
+}
+function setArena(a) {
+  const now = performance.now();
+  const shrank = area(a) < area(arenaTo) - 1;
+  arenaFrom = curArena(now); arenaTo = a; arenaT0 = now;
+  return shrank;
+}
+function clampPos(p) {   // where you can stand
+  const [x0, y0, x1, y1] = arenaTo;
+  return [Math.min(Math.max(p[0], x0 + MARGIN), x1 - MARGIN), Math.min(Math.max(p[1], y0 + MARGIN), y1 - MARGIN)];
+}
+function clampAim(p) {   // where you can aim
+  const [x0, y0, x1, y1] = arenaTo;
+  return [Math.min(Math.max(p[0], x0), x1), Math.min(Math.max(p[1], y0), y1)];
+}
 
 // ---------- small UI helpers ----------
+function setMsg(text) { $("msg").textContent = text; }
 
-// Updates the message displayed on the webpage.
-function setMsg(text) {
-  $("msg").textContent = text;
-}
-
-// Updates the scoreboard with every player's name and score.
+// the players list: colour, name and a sign showing READY / IN / OUT
 function renderScore() {
-  const box = $("score");
-
-  // Clears the old scoreboard before drawing the updated one.
+  const box = $("roster");
   box.textContent = "";
+  const title = document.createElement("div");
+  title.className = "rtitle";
+  title.textContent = "PLAYERS";
+  box.appendChild(title);
 
-  // Loops through every player name and its index.
   names.forEach((n, i) => {
-    const span = document.createElement("span");
+    if (!joined.includes(i)) return;
+    const out = aliveSlots !== null && !aliveSlots.includes(i);
+    const ready = readySlots.includes(i);
+    const showReady = phase === "waiting" || phase === "result";
 
-    // Gives each player their assigned color.
-    span.style.color = COLORS[i % COLORS.length].body;
+    let text = "IN", cls = "rtag";
+    if (phase === "over") text = i === winnerSlot ? "WINNER" : out ? "OUT" : "";
+    else if (out) text = "OUT";
+    else if (showReady) { text = ready ? "READY" : "NOT READY"; if (ready) cls += " ready"; }
 
-    // Adds space around each player's scoreboard entry.
-    span.style.margin = "0 6px";
-
-    // Shows the name, marks the current player, and displays their score.
-    // wins[i] ?? 0 means to use 0 if that score is null or undefined.
-    span.textContent = `${n}${i === slot ? " (you)" : ""} ${wins[i] ?? 0}`;
-
-    // Adds the player's entry to the scoreboard.
-    box.appendChild(span);
+    const row = document.createElement("div");
+    row.className = "rrow" + (out ? " out" : "");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = colorFor(i).body;
+    const name = document.createElement("span");
+    name.className = "rname";
+    name.textContent = n + (i === slot ? " (you)" : "");
+    const tag = document.createElement("span");
+    tag.className = cls;
+    tag.textContent = text;
+    row.append(dot, name, tag);
+    box.appendChild(row);
   });
 }
-
-// Shows the appropriate button for the current game phase.
 function renderButtons() {
   let html = "";
-
-  // During aiming, the player can lock in their target.
-  if (phase === "aim") html = '<button class="go" data-act="lock">LOCK IN</button>';
-
-  // After the result, eligible players can request the next round.
-  if (phase === "result" && needsNext) html = '<button class="go" data-act="next">NEXT ROUND</button>';
-
-  // Replaces the existing buttons with the appropriate button or none.
+  if (phase === "waiting") {
+    html = iAmReady ? '<button data-act="ready">NOT READY</button>' : '<button class="go" data-act="ready">READY</button>';
+  }
+  if (phase === "aim" && TOUCH) html = '<button class="go" data-act="fire">FIRE</button>';   // phones only
+  if (phase === "result" && canReady && !iAmReady) html = '<button class="go" data-act="ready">READY</button>';
   $("btns").innerHTML = html;
 }
-
-// Hides the lobby and displays the game area.
-function showGame() {
-  $("lobby").hidden = true;
-  $("game").hidden = false;
+function showGame() { $("lobby").hidden = true; $("game").hidden = false; }
+function waitingMsg() {
+  const n = joined.length;
+  return `Room ${roomCode}: ${n} player${n === 1 ? "" : "s"} here. ` +
+    (n < 2 ? "Share the code and wait for someone to join!"
+           : "Click READY. The game starts when everyone is ready!");
 }
-
+function aimHint() {
+  return TOUCH ? "Touch the arena to point the laser, then tap FIRE!"
+               : "Move your mouse to point the laser, then press ENTER to fire!";
+}
 
 // ---------- lobby buttons ----------
-
-// When Create Room is clicked, sends the player's name and chosen room size.
-// Number(...) converts the player-count input from text into a number.
-$("create").onclick = () => socket.emit("create_room", {
-  name: $("name").value,
-  max_players: Number($("players").value),
-});
-
-// When Join Game is clicked, sends the player's name and room code.
-$("join").onclick = () => socket.emit("join_game", {
-  name: $("name").value,
-  code: $("code").value
-});
-
-// Automatically converts the room code to uppercase as the user types.
-$("code").addEventListener("input", (e) => {
-  e.target.value = e.target.value.toUpperCase();
-});
-
+$("create").onclick = () => socket.emit("create_room", { name: $("name").value });
+$("join").onclick = () => socket.emit("join_game", { name: $("name").value, code: $("code").value });
+$("code").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase(); });
 
 // ---------- actions ----------
-
-// Submits the chosen target to the server.
-function lock() {
-  // A player can only lock a shot during the aiming phase.
-  if (phase !== "aim") return;
-
-  // Stops the player from locking in without choosing a target.
-  if (!target) {
-    setMsg("Click the arena to pick a target first!");
+function fire() {
+  if (phase !== "aim" || !myPos) return;
+  if (!mouse) { setMsg(TOUCH ? "Touch the arena to aim first!" : "Move your mouse over the arena to aim first!"); return; }
+  const p = clampAim(mouse);
+  if (Math.hypot(p[0] - myPos[0], p[1] - myPos[1]) < MIN_AIM) {
+    setMsg("Aim a bit further away from yourself.");
     return;
   }
-
-  // Sends the target coordinates to the Python backend.
-  // The server is responsible for validating and storing the secret target.
-  socket.emit("submit_target", { x: target[0], y: target[1] });
+  target = p;
+  socket.emit("submit_target", { x: p[0], y: p[1] });
 }
-
-// Requests the next round when the player is allowed to continue.
-function next() {
-  if (phase !== "result" || !needsNext) return;
-
-  // Tells the server that this player is ready for the next round.
-  socket.emit("ready_next");
-
-  // Prevents repeatedly requesting the next round from this client.
-  needsNext = false;
-
-  // Updates the message and removes the next-round button.
-  setMsg("Waiting for the other players...");
-  renderButtons();
+function toggleReady() {
+  if (phase === "waiting") {
+    iAmReady = !iAmReady;
+    socket.emit("toggle_ready");
+    renderButtons();
+  } else if (phase === "result" && canReady && !iAmReady) {
+    iAmReady = true;
+    socket.emit("toggle_ready");
+    setMsg("You are ready! Waiting for the others...");
+    renderButtons();
+  }
 }
-
-// Handles clicks on buttons inside the btns container.
-// data-act tells us which action a button represents.
-$("btns").addEventListener("click", (e) => {
-  const act = e.target.dataset.act;
-
-  if (act === "lock") lock();
-  if (act === "next") next();
+document.addEventListener("click", (e) => {
+  const act = e.target.dataset ? e.target.dataset.act : null;
+  if (act === "ready") toggleReady();
+  if (act === "fire") fire();
+  if (act === "home") location.reload();   // leaves the room and goes back to the start page
 });
-
-// Allows keyboard shortcuts for locking a shot or requesting the next round.
 addEventListener("keydown", (e) => {
   const tag = document.activeElement.tagName;
-
-  // Enter and Space work as shortcuts, except while typing in an input
-  // or interacting with a button.
-  if ((e.key === "Enter" || e.key === " ") &&
-      tag !== "BUTTON" && tag !== "INPUT") {
-
-    if (phase === "aim") lock();
-    else if (phase === "result") next();
-
-    // Prevents the browser's default action for that key.
+  if ((e.key === "Enter" || e.key === " ") && tag !== "BUTTON" && tag !== "INPUT") {
+    if (phase === "aim") fire(); else toggleReady();
     e.preventDefault();
   }
 });
 
-
-// ---------- cursor aiming ----------
-
-// Converts a browser mouse/pointer position into arena coordinates.
+// ---------- mouse: click to stand somewhere, then move the mouse to point the laser ----------
 function pos(e) {
   const r = cv.getBoundingClientRect();
-
-  // Converts the pointer's screen position into the canvas's
-  // internal 320 x 180 coordinate system.
-  return [
-    (e.clientX - r.left) / r.width * W,
-    (e.clientY - r.top) / r.height * H
-  ];
+  return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H];
 }
-
-// Updates the stored mouse position as the pointer moves.
-cv.addEventListener("pointermove", (e) => {
-  mouse = pos(e);
-});
-
-// Stops showing the cursor marker when the pointer leaves the arena.
-cv.addEventListener("pointerleave", () => {
-  mouse = null;
-});
-
-// Selects a target when the player clicks the arena.
+cv.addEventListener("pointermove", (e) => { mouse = pos(e); });
 cv.addEventListener("pointerdown", (e) => {
-  // Target selection is only allowed during aiming.
-  if (phase !== "aim") return;
-
-  // Saves the clicked coordinates as the laser target.
-  target = pos(e);
-
-  // Updates the cursor position so the marker matches the selected target.
-  mouse = target;
+  mouse = pos(e);
+  if (phase === "place") {
+    // clicking picks your spot (kept inside the glowing area) and locks it straight away
+    pendingPos = clampPos(mouse);
+    socket.emit("submit_position", { x: pendingPos[0], y: pendingPos[1] });
+  }
 });
-
 
 // ---------- messages from the server ----------
-
-// Runs when the server confirms that the player has joined a room.
 socket.on("room_joined", (d) => {
-  // Stores this player's assigned slot and the current game stage.
   slot = d.slot;
+  roomCode = d.code;
   phase = "waiting";
-
-  // Displays the game and updates the interface.
   showGame();
   renderButtons();
-
-  // Tells the player their room code so they can share it.
-  setMsg(`Room ${d.code}. Share this code with the other players!`);
+  setMsg(waitingMsg());
 });
 
-// Runs when the server sends updated lobby information.
 socket.on("lobby_update", (d) => {
-  // Updates the maximum number of players allowed in this room.
-  maxPlayers = d.max_players;
-
-  // Creates a placeholder name for every possible player slot.
-  names = Array.from({ length: maxPlayers }, (_, i) => `P${i + 1}`);
-
-  // Replaces placeholders with the names of players who have joined.
-  d.players.forEach((p) => {
-    names[p.slot] = p.name;
-  });
-
-  // Resizes the score array if the room's player count has changed.
-  if (wins.length !== maxPlayers) wins = new Array(maxPlayers).fill(0);
-
+  roomCode = d.code;
+  names = [];
+  d.players.forEach((p) => { names[p.slot] = p.name; });
+  joined = d.players.map((p) => p.slot);
+  readySlots = d.ready_slots;
+  iAmReady = readySlots.includes(slot);
+  if (phase === "waiting") setMsg(waitingMsg());
   renderScore();
-
-  // If the server says the room is waiting, reset the client for the lobby.
-  // This can happen while the room is filling up or after someone leaves.
-  if (phase !== "lobby" && d.phase === "waiting") {
-    phase = "waiting";
-    myPos = null;
-    reveal = null;
-    needsNext = false;
-
-    // Resets the displayed scores for the waiting room.
-    wins = new Array(maxPlayers).fill(0);
-
-    renderScore();
-    renderButtons();
-
-    // Shows how many players have joined so far.
-    setMsg(`Room ${d.code}: ${d.players.length}/${maxPlayers} players. Share the code!`);
-  }
-});
-
-// Runs when the server starts a new round for this player.
-socket.on("round_start", (d) => {
-  // Stores this player's slot, alive status, and current scores.
-  slot = d.slot;
-  isAlive = d.alive;
-  wins = d.wins;
-
-  // Clears the previous target, reveal, and explosion effects.
-  target = null;
-  reveal = null;
-  parts = [];
-  needsNext = false;
-
-  renderScore();
-
-  if (d.alive) {
-    // Living players can aim and submit a shot.
-    phase = "aim";
-    myPos = [d.x, d.y];
-
-    setMsg(`Round ${d.round}: ${d.alive_count} players left. Click to aim, then lock in!`);
-  } else {
-    // Eliminated players watch the round instead of aiming.
-    phase = "spectate";
-    myPos = null;
-
-    setMsg(`You are out! Watching round ${d.round}...`);
-  }
-
   renderButtons();
 });
 
-// Runs when the server confirms that this player's shot has been locked in.
+socket.on("round_start", (d) => {
+  slot = d.slot;
+  isAlive = d.alive;
+  aliveSlots = d.alive_slots;
+  readySlots = d.ready_slots || [];
+  iAmReady = false; canReady = false;
+  const shrank = setArena(d.arena);
+  target = null; reveal = null; parts = []; myPos = null; pendingPos = null;
+  placeDeadline = performance.now() + (d.place_seconds || 40) * 1000;
+  roundDeadline = performance.now() + (d.round_seconds || 70) * 1000;
+  if (d.alive) {
+    phase = "place";
+    setMsg(`${shrank ? "The room shrank! " : ""}Round ${d.round}: ${d.alive_count} players left. Click where you want to stand.`);
+  } else {
+    phase = "spectate";
+    setMsg(`You are out! Watching round ${d.round}...`);
+  }
+  renderScore();
+  renderButtons();
+});
+
+// you chose your spot: you can aim straight away, you don't wait for the others
+socket.on("position_locked", () => {
+  myPos = pendingPos;
+  phase = "aim";
+  renderButtons();
+  setMsg(aimHint());
+});
+
+// time ran out while placing: the server put you at a random spot
+socket.on("position_assigned", (d) => {
+  myPos = [d.x, d.y];
+  phase = "aim";
+  renderButtons();
+  setMsg("Time ran out! You were placed at a random spot. " + aimHint());
+});
+
 socket.on("target_locked", () => {
   phase = "locked";
   renderButtons();
-  setMsg("Locked in! Waiting for the others...");
+  setMsg("Fired! Waiting for the others...");
 });
 
-// Updates the player with the number of shots that have been submitted.
 socket.on("lock_count", (d) => {
-  if (phase === "aim") {
-    setMsg(`${d.locked}/${d.total} locked in. Click to aim, then lock in!`);
-  } else if (phase === "locked") {
-    setMsg(`Locked in! ${d.locked}/${d.total} ready...`);
-  } else if (phase === "spectate") {
-    setMsg(`Watching... ${d.locked}/${d.total} locked in.`);
-  }
+  const placed = `${d.placed}/${d.total} placed`, fired = `${d.fired}/${d.total} fired`;
+  if (phase === "place") setMsg(`${placed}. Click where you want to stand.`);
+  else if (phase === "aim") setMsg(`${fired}. ${aimHint()}`);
+  else if (phase === "locked") setMsg(`Fired! ${fired}...`);
+  else if (phase === "spectate") setMsg(`Watching... ${placed}, ${fired}.`);
 });
 
-// Runs when the server reveals the submitted shots and round results.
 socket.on("reveal", (d) => {
-  // Stores the revealed information for the animation.
   reveal = d;
-  pendingWins = d.wins;
-
-  // Starts the laser animation.
   phase = "fire";
   t0 = performance.now();
   resolved = false;
-
-  // Resets each player's local animation state.
-  d.players.forEach((p) => {
-    p.dead = false;
-  });
-
+  placeDeadline = null; roundDeadline = null;
+  d.players.forEach((p) => { p.dead = false; });
   renderButtons();
   setMsg("FIRE!");
 });
 
-// Displays a message when a player leaves the room.
-socket.on("player_left", () => {
-  setMsg("A player left the room.");
-});
+// everyone else left, so the game ended early
+socket.on("game_over", (d) => showEnd(d.winner, d.winner_name));
 
-// Displays errors sent by the server.
 socket.on("error_msg", (d) => {
-  if (phase === "lobby") {
-    $("lobbyErr").textContent = d.message;
-  } else {
-    setMsg(d.message);
-  }
+  if (phase === "lobby") { $("lobbyErr").textContent = d.message; return; }
+  if (phase === "place") pendingPos = null;   // that spot was rejected: pick another
+  setMsg(d.message);
 });
-
 
 // ---------- drawing ----------
-
-// Draws the pixel-art sprite at a given position.
 function sprite(x, y, body, bob) {
-  // Loops through every row of the sprite pattern.
   SPR.forEach((row, r) => {
-
-    // Loops through every character in that row.
     [...row].forEach((ch, c) => {
-      // Dots are transparent, so nothing is drawn for them.
       if (ch === ".") return;
-
-      // Chooses the color based on the sprite character.
       ctx.fillStyle = ch === "X" ? body : ch === "W" ? "#fff" : "#14062e";
-
-      // Draws one 2 x 2 pixel square.
-      // x and y are the sprite's centre; c and r select a pixel.
-      // bob adds a tiny vertical movement for animation.
-      ctx.fillRect(
-        Math.round(x - 8 + c * 2),
-        Math.round(y - 8 + r * 2 + bob),
-        2,
-        2
-      );
+      ctx.fillRect(Math.round(x - 8 + c * 2), Math.round(y - 8 + r * 2 + bob), 2, 2);
     });
   });
 }
-
-// Draws a player's shadow and animated sprite.
 function drawPlayer(x, y, s, now) {
-  // Draws a small shadow below the player.
   ctx.fillStyle = "rgba(0,0,0,.35)";
   ctx.fillRect(x - 7, y + 8, 14, 3);
-
-  // Draws the sprite using the color for that player's slot.
-  // Math.sin creates a gentle up-and-down bobbing animation.
-  sprite(
-    x,
-    y,
-    COLORS[s % COLORS.length].body,
-    Math.round(Math.sin(now / 220 + s * 2))
-  );
+  sprite(x, y, colorFor(s).body, Math.round(Math.sin(now / 220 + s * 2)));
 }
-
-// Draws the tiled arena floor and its border.
 function floor() {
-  // Loops over the arena's columns and rows.
-  for (let x = 0; x < W / TILE; x++) {
-    for (let y = 0; y < H / TILE; y++) {
-
-      // Alternates between two colors to create a checkerboard floor.
-      ctx.fillStyle = (x + y) % 2 ? "#2d1557" : "#241046";
-
-      // Draws one square floor tile.
-      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
-    }
+  for (let x = 0; x < W / TILE; x++) for (let y = 0; y < H / TILE; y++) {
+    ctx.fillStyle = (x + y) % 2 ? "#2d1557" : "#241046";
+    ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
   }
-
-  // Draws the glowing border around the arena.
-  ctx.strokeStyle = "#ff4fd8";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(1, 1, W - 2, H - 2);
 }
-
-// Draws a small square marking the selected target.
+function drawArena(a) {
+  // everything outside the glowing border is out of bounds
+  const [x0, y0, x1, y1] = a;
+  ctx.fillStyle = "rgba(8,2,20,.88)";
+  ctx.fillRect(0, 0, W, y0); ctx.fillRect(0, y1, W, H - y1);
+  ctx.fillRect(0, y0, x0, y1 - y0); ctx.fillRect(x1, y0, W - x1, y1 - y0);
+  ctx.save();
+  ctx.shadowColor = "#ff4fd8"; ctx.shadowBlur = 8;
+  ctx.strokeStyle = "#ff4fd8"; ctx.lineWidth = 2;
+  ctx.strokeRect(x0 + 1, y0 + 1, x1 - x0 - 2, y1 - y0 - 2);
+  ctx.restore();
+}
 function mark(tx, ty, s) {
-  // Uses the player's laser color for the target marker.
-  ctx.strokeStyle = COLORS[s % COLORS.length].beam;
-  ctx.lineWidth = 1;
-
-  // Draws a 6 x 6 outline centred on the target coordinates.
+  ctx.strokeStyle = colorFor(s).beam; ctx.lineWidth = 1;
   ctx.strokeRect(Math.round(tx) - 3, Math.round(ty) - 3, 6, 6);
 }
-
-// Draws a cross-shaped cursor at the current mouse position.
 function cross(x, y, c) {
   ctx.fillStyle = c;
-
-  // Draws the four short arms of the cross.
-  ctx.fillRect(x - 7, y, 4, 1);
-  ctx.fillRect(x + 4, y, 4, 1);
-  ctx.fillRect(x, y - 7, 1, 4);
-  ctx.fillRect(x, y + 4, 1, 4);
+  ctx.fillRect(x - 7, y, 4, 1); ctx.fillRect(x + 4, y, 4, 1);
+  ctx.fillRect(x, y - 7, 1, 4); ctx.fillRect(x, y + 4, 1, 4);
 }
-
-// Draws all players' laser beams during the reveal animation.
+function previewBeam(from, to, s) {
+  // your own aiming beam: only drawn in your browser, nobody else ever sees it
+  const c = colorFor(s).beam;
+  ctx.save();
+  ctx.shadowColor = c; ctx.shadowBlur = 8; ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.globalAlpha = .85;
+  ctx.beginPath(); ctx.moveTo(from[0], from[1]); ctx.lineTo(to[0], to[1]); ctx.stroke();
+  ctx.restore();
+}
 function beams(el) {
-  // Controls how far each laser has travelled.
-  // It grows from 0 to 1 over 350 milliseconds.
   const grow = Math.min(1, el / 350);
-
-  // Draws a beam for every player whose shot was revealed.
   reveal.players.forEach((p) => {
-    // Calculates the direction from the player's position to their target.
-    const dx = p.tx - p.x;
-    const dy = p.ty - p.y;
-
-    // Calculates the straight-line distance to the target.
-    // || 1 avoids division by zero if the coordinates are identical.
-    const L = Math.hypot(dx, dy) || 1;
-
-    // Calculates the current end of the growing laser beam.
-    const len = L * grow;
-    const x1 = p.x + dx / L * len;
-    const y1 = p.y + dy / L * len;
-
-    // Chooses the beam color for the shooting player.
-    const c = COLORS[p.slot % COLORS.length].beam;
-
-    // Saves drawing settings so they can be restored afterwards.
+    const dx = p.tx - p.x, dy = p.ty - p.y, L = Math.hypot(dx, dy) || 1;
+    if (dx === 0 && dy === 0) return;   // this player ran out of time and did not shoot
+    const len = L * grow, x1 = p.x + dx / L * len, y1 = p.y + dy / L * len;
+    const c = colorFor(p.slot).beam;
     ctx.save();
-
-    // Draws the glowing colored outer beam.
-    ctx.shadowColor = c;
-    ctx.shadowBlur = 14;
-    ctx.strokeStyle = c;
-    ctx.lineWidth = 4 + Math.random();
-
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(x1, y1);
-    ctx.stroke();
-
-    // Draws a thin white line inside the colored beam.
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.5;
-
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(x1, y1);
-    ctx.stroke();
-
-    // Restores the previous drawing settings.
+    ctx.shadowColor = c; ctx.shadowBlur = 14; ctx.strokeStyle = c; ctx.lineWidth = 4 + Math.random();
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(x1, y1); ctx.stroke();
     ctx.restore();
   });
 }
-
-// Creates explosion particles when a player is hit.
 function boom(p) {
-  // Creates 36 particles starting at the eliminated player's position.
   for (let i = 0; i < 36; i++) {
-    parts.push({
-      x: p.x,
-      y: p.y,
-
-      // Gives each particle a slightly different direction.
-      vx: (Math.random() - .5) * 3.5,
-      vy: (Math.random() - .5) * 3.5,
-
-      // Mostly uses the player's color, with some white particles.
-      c: i % 3 ? COLORS[p.slot % COLORS.length].body : "#fff",
-
-      // l represents the particle's remaining life.
-      l: 1
-    });
+    parts.push({ x: p.x, y: p.y, vx: (Math.random() - .5) * 3.5, vy: (Math.random() - .5) * 3.5,
+                 c: i % 3 ? colorFor(p.slot).body : "#fff", l: 1 });
   }
-
-  // Starts the screen-shake effect.
   shake = 7;
 }
 
-// Finishes the laser animation and displays the round result.
-function finish() {
-  phase = "result";
-
-  // Updates scores with the values sent by the server.
-  wins = pendingWins;
+// the game is over: show who won
+function showEnd(winner, name) {
+  phase = "over";
+  winnerSlot = winner;
+  canReady = false;
+  placeDeadline = null; roundDeadline = null;
+  $("endText").textContent = winner === null ? "NOBODY WINS!" : winner === slot ? "YOU WON!" : `${name} WINS!`;
+  $("end").hidden = false;
+  setMsg("Game over!");
   renderScore();
-
-  // Collects the slot numbers of all players hit in this round.
-  const hitSlots = reveal.players
-    .filter((p) => p.hit)
-    .map((p) => p.slot);
-
-  // Checks whether this player's slot appears among the hit players.
-  const iWasHit = hitSlots.includes(slot);
-
-  // Updates this client's alive status if the player was hit.
-  if (iWasHit) isAlive = false;
-
-  let text;
-
-  // Displays the overall match outcome if the match has ended.
-  if (reveal.match_over) {
-    if (reveal.winner === null) {
-      text = "EVERYONE FELL! Nobody wins this match.";
-    } else if (reveal.winner === slot) {
-      text = "YOU WIN THE MATCH!";
-    } else {
-      text = `${names[reveal.winner]} WINS THE MATCH!`;
-    }
-  } else if (hitSlots.length === 0) {
-    // No players were hit, so the surviving players continue.
-    text = "EVERYONE MISSED! Survivors shuffle a little.";
-  } else {
-    // Displays how many players were eliminated and how many remain.
-    text = `${hitSlots.length} knocked out, ${reveal.alive_count} left.`;
-  }
-
-  // Adds a personal message if this player was hit.
-  if (iWasHit) text = "YOU GOT HIT! " + text;
-
-  // Players still alive can request the next round.
-  // If the match ended, the interface also allows the next-match flow.
-  needsNext = reveal.match_over || isAlive;
-
-  setMsg(text);
   renderButtons();
 }
 
+function finish() {
+  aliveSlots = reveal.alive_slots;
+  readySlots = [];
+  iAmReady = false;
 
-// ---------- main animation loop ----------
+  const hitSlots = reveal.players.filter((p) => p.hit).map((p) => p.slot);
+  const iWasHit = hitSlots.includes(slot);
+  if (iWasHit) isAlive = false;
 
-// Runs repeatedly to redraw the arena and animate the game.
-function loop(now) {
-  // Saves the current drawing settings before applying effects.
-  ctx.save();
+  if (reveal.match_over) { showEnd(reveal.winner, reveal.winner_name); return; }
 
-  // Applies a small random screen movement while the arena is shaking.
-  if (shake > .3) {
-    ctx.translate(
-      (Math.random() - .5) * shake,
-      (Math.random() - .5) * shake
-    );
+  phase = "result";
+  let text = hitSlots.length === 0
+    ? `Round ${reveal.round}: nobody was hit.`
+    : `Round ${reveal.round}: eliminated - ${hitSlots.map((s) => names[s]).join(", ")}`;
+  if (reveal.shrinking) text += " The room is shrinking!";
+  if (iWasHit) text = "YOU GOT HIT! " + text;
 
-    // Gradually reduces the shake strength.
-    shake *= .9;
+  // only the survivors click READY for the next round
+  canReady = isAlive;
+  setMsg(text);
+  renderScore();
+  renderButtons();
+}
+
+// seconds left, red in the last 10: choosing a spot has its own limit, then the whole round has one
+function updateTimer(now) {
+  const el = $("timer");
+  const deadline = phase === "place" ? placeDeadline
+    : (phase === "aim" || phase === "locked" || phase === "spectate") ? roundDeadline : null;
+  if (deadline === null) {
+    if (lastSec !== -2) { el.textContent = ""; lastSec = -2; }
+    return;
   }
+  const s = Math.max(0, Math.ceil((deadline - now) / 1000));
+  if (s !== lastSec) {
+    lastSec = s;
+    el.textContent = s + "s";
+    el.classList.toggle("low", s <= 10);
+  }
+}
 
-  // Redraws the floor at the beginning of each frame.
+function loop(now) {
+  updateTimer(now);
+  ctx.save();
+  if (shake > .3) { ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake); shake *= .9; }
   floor();
+  drawArena(curArena(now));
 
-  // During aiming or after locking, only draw this player's position.
-  // This keeps opponents' positions hidden until the reveal.
-  if ((phase === "aim" || phase === "locked") && myPos) {
-    drawPlayer(myPos[0], myPos[1], slot, now);
-
-    // Shows the selected target marker, if one exists.
-    if (target) mark(target[0], target[1], slot);
-
-    // Shows the moving cursor while the player is aiming.
-    if (phase === "aim" && mouse) {
-      cross(
-        Math.round(mouse[0]),
-        Math.round(mouse[1]),
-        COLORS[slot % COLORS.length].beam
-      );
+  const col = colorFor(slot);
+  if (phase === "place") {
+    // a see-through version of you follows the mouse: click to stand there
+    if (mouse) {
+      const g = clampPos(mouse);
+      ctx.globalAlpha = .6;
+      drawPlayer(g[0], g[1], slot, now);
+      ctx.globalAlpha = 1;
     }
-
-  // Once shots are revealed, draw the players and laser effects.
-  } else if ((phase === "fire" || phase === "result") && reveal) {
-    // During firing, elapsed time controls the laser animation.
-    // Afterwards, use a large value so the beams are fully extended.
+  } else if ((phase === "aim" || phase === "locked") && myPos) {
+    // you only ever see yourself, never the others
+    drawPlayer(myPos[0], myPos[1], slot, now);
+    if (phase === "aim" && mouse) {
+      const a = clampAim(mouse);
+      previewBeam(myPos, a, slot);
+      cross(Math.round(a[0]), Math.round(a[1]), col.beam);
+    }
+    if (phase === "locked" && target) { previewBeam(myPos, target, slot); mark(target[0], target[1], slot); }
+  } else if ((phase === "fire" || phase === "result" || phase === "over") && reveal) {
     const el = phase === "fire" ? now - t0 : 9999;
-
-    // Draws each player's sprite and target marker.
     reveal.players.forEach((p) => {
       if (!p.dead) drawPlayer(p.x, p.y, p.slot, now);
-      mark(p.tx, p.ty, p.slot);
+      if (p.tx !== p.x || p.ty !== p.y) mark(p.tx, p.ty, p.slot);
     });
-
-    // Animates all the laser beams.
     beams(el);
-
-    // Draws surviving sprites again so they appear above the beams.
-    reveal.players.forEach((p) => {
-      if (!p.dead) drawPlayer(p.x, p.y, p.slot, now);
-    });
-
-    // After 450 ms, processes hits and creates explosions once.
+    reveal.players.forEach((p) => { if (!p.dead) drawPlayer(p.x, p.y, p.slot, now); });
     if (phase === "fire" && el > 450 && !resolved) {
       resolved = true;
-
-      reveal.players.forEach((p) => {
-        if (p.hit) {
-          p.dead = true;
-          boom(p);
-        }
-      });
+      reveal.players.forEach((p) => { if (p.hit) { p.dead = true; boom(p); } });
     }
-
-    // After 1.7 seconds, finish the animation and show the result.
     if (phase === "fire" && el > 1700) finish();
   }
 
-  // Updates and draws every explosion particle.
   parts.forEach((q) => {
-    q.x += q.vx;
-    q.y += q.vy;
-
-    // Adds a small downward acceleration, like gravity.
-    q.vy += .05;
-
-    // Gradually fades the particle.
-    q.l -= .014;
-
-    ctx.fillStyle = q.c;
-    ctx.globalAlpha = Math.max(0, q.l);
-
-    // The | 0 operation converts the position to an integer.
-    ctx.fillRect(q.x | 0, q.y | 0, 2, 2);
+    q.x += q.vx; q.y += q.vy; q.vy += .05; q.l -= .014;
+    ctx.fillStyle = q.c; ctx.globalAlpha = Math.max(0, q.l); ctx.fillRect(q.x | 0, q.y | 0, 2, 2);
   });
-
-  // Restores full opacity after drawing translucent particles.
   ctx.globalAlpha = 1;
-
-  // Removes particles whose life has run out.
   parts = parts.filter((q) => q.l > 0);
-
-  // Restores the drawing settings saved at the beginning of this frame.
   ctx.restore();
-
-  // Requests another animation frame, keeping the game running smoothly.
   requestAnimationFrame(loop);
 }
-
-
-// ---------- start the frontend ----------
-
-// Draws the initial scoreboard.
 renderScore();
-
-// Starts the repeating animation loop.
 requestAnimationFrame(loop);
