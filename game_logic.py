@@ -1,71 +1,108 @@
+import math
+import random
+
+from constants import HIT_RADIUS, MIN_AIM_DISTANCE, EDGE_MARGIN
+
+EPS = 1e-6   # tolerance for the decimals the browser sends back
+
 
 def get_alive_players(players):
     return [player for player in players if player.alive]
 
 
-def get_laser_path(start, target):
-   
-    x1, y1 = start
-    x2, y2 = target
+def random_position(arena):
+    # a random legal spot inside the arena, used when a player runs out of time while placing
+    x0, y0, x1, y1 = arena
+    x = random.uniform(x0 + EDGE_MARGIN, x1 - EDGE_MARGIN)
+    y = random.uniform(y0 + EDGE_MARGIN, y1 - EDGE_MARGIN)
+    return (round(x, 1), round(y, 1))
 
-    path = []
 
-    dx = abs(x2 - x1)
-    dy = abs(y2 - y1)
+def validate_position(x, y, arena):
+    # where a player wants to stand. the browser can't be trusted, so check it.
+    # returns (position, error_message); exactly one of them is None
+    try:
+        x = float(x)
+        y = float(y)
+    except (TypeError, ValueError):
+        return None, "That spot is not a valid point."
 
-    sx = 1 if x1 < x2 else -1
-    sy = 1 if y1 < y2 else -1
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None, "That spot is not a valid point."
 
-    error = dx - dy 
-    while True:
-        path.append((x1, y1)) #adds the laser's current position to its path.
+    x0, y0, x1, y1 = arena
+    m = EDGE_MARGIN
+    if not (x0 + m - EPS <= x <= x1 - m + EPS and y0 + m - EPS <= y <= y1 - m + EPS):
+        return None, "Stay inside the glowing area."
 
-        if (x1, y1) == (x2, y2): #checks whether the laser has reached its target.
-            break
+    return (round(x, 1), round(y, 1)), None
 
-        double_error = 2 * error #doubles the running error so we can compare it with the horizontal and vertical distances.
 
-     #decides whether to move horizontally or vertically based on the error value.
-        if double_error > -dy: 
-            error -= dy
-            x1 += sx
+def validate_target(shooter, x, y, arena):
+    # the browser can't be trusted, so check what it sent.
+    # returns (target, error_message); exactly one of them is None
+    try:
+        x = float(x)
+        y = float(y)
+    except (TypeError, ValueError):
+        return None, "That target is not a valid point."
 
-        if double_error < dx:
-            error += dx
-            y1 += sy
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None, "That target is not a valid point."
 
-    return path
+    x0, y0, x1, y1 = arena
+    if not (x0 - EPS <= x <= x1 + EPS and y0 - EPS <= y <= y1 + EPS):
+        return None, "Aim inside the glowing area."
+
+    if math.hypot(x - shooter.position[0], y - shooter.position[1]) < MIN_AIM_DISTANCE:
+        return None, "Aim a bit further away from yourself."
+
+    return (x, y), None
+
+
+def laser_hits(shooter, target):
+    # the laser is a short beam: it starts at the shooter and stops at the clicked point.
+    # it only hits someone standing on that line, between the shooter and the point.
+    dx = shooter.laser_target[0] - shooter.position[0]
+    dy = shooter.laser_target[1] - shooter.position[1]
+    length = math.hypot(dx, dy)
+
+    if length == 0:
+        return False
+
+    dx, dy = dx / length, dy / length
+
+    vx = target.position[0] - shooter.position[0]
+    vy = target.position[1] - shooter.position[1]
+
+    # closest point on the beam to the target, clamped to the beam's two ends
+    along = max(0, min(length, vx * dx + vy * dy))
+
+    # distance from the target's centre to that closest point
+    return math.hypot(vx - dx * along, vy - dy * along) <= HIT_RADIUS
 
 
 def get_players_hit(players):
-  
+    # checking who got hit
     players_hit = set()
 
     for shooter in players:
         if not shooter.alive or shooter.laser_target is None:
             continue
 
-        # Find all grid cells along the laser's path
-        laser_path = get_laser_path(
-            shooter.position,
-            shooter.laser_target
-        )
-
         for target_player in players:
 
-            # A player cannot hit themselves
-            if shooter == target_player or not target_player.alive:
-                continue
+            # a player cannot hit themselves
+            if shooter != target_player and target_player.alive:
 
-            # Check whether the player's position is along the laser path
-            if target_player.position in laser_path:
-                players_hit.add(target_player)
+                if laser_hits(shooter, target_player):
+                    players_hit.add(target_player)
 
     return players_hit
 
 
 def eliminate_players(players_hit):
-
+    # eliminate players only after checking all lasers
     for player in players_hit:
         player.alive = False
 
@@ -77,4 +114,3 @@ def get_winner(players):
         return alive_players[0]
 
     return None
-#needs to be updated bcs we need to use the cursor type shit 
