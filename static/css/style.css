@@ -14,7 +14,7 @@ width:min(100%,420px);font-size:11px;text-align:center}
 input{font:inherit;font-size:13px;width:100%;padding:12px;color:var(--ink);background:#241046;border:3px solid var(--mute);
 border-radius:0;text-align:center}
 input:focus-visible{outline:3px solid var(--yel);outline-offset:2px}
-#game{width:min(100%,960px);display:flex;flex-direction:column;gap:14px;align-items:center}
+#game{width:min(100%,1200px);display:flex;flex-direction:column;gap:14px;align-items:center}
 #game[hidden]{display:none}
 .wrap{position:relative;width:100%}
 canvas{display:block;width:100%;height:auto;image-rendering:pixelated;background:#000;border:4px solid var(--pink);
