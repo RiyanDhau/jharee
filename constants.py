@@ -1,8 +1,8 @@
 # Game-wide numbers. The arena is a flat top-down map measured in "arena units".
-# The browser draws it at 320 x 180 and scales it up, so keep these in sync with static/js/game.js.
+# The browser draws it at 480 x 270 and scales it up, so keep these in sync with static/js/game.js.
 
-ARENA_W = 320
-ARENA_H = 180
+ARENA_W = 480
+ARENA_H = 270
 
 HIT_RADIUS = 12        # how close a laser beam must pass to a player's centre to hit them
 MIN_AIM_DISTANCE = 10  # a target closer than this to your own position is rejected
