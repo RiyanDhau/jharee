@@ -1,7 +1,7 @@
 // Browser side of Pixel Pop: Laser Duel. All secret information stays on the server:
 // this page only ever knows your own position until the reveal arrives.
 
-const W = 320, H = 180, TILE = 20, MIN_AIM = 10, MARGIN = 10;
+const W = 480, H = 270, TILE = 30, MIN_AIM = 10, MARGIN = 10;
 const BASE_COLORS = [
   { body: "#3b8cff", beam: "#2dc4ff" },   // slot 0: blue
   { body: "#ff3b6b", beam: "#ff2d55" },   // slot 1: red
