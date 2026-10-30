@@ -1,9 +1,10 @@
 import threading
+
 from constants import (
     PLACE_SECONDS, AIM_SECONDS, MIN_PLAYERS, MAX_PLAYERS,
     ARENA_W, ARENA_H, SHRINK_FACTOR, MIN_ARENA_SCALE,
 )
-from player import Player #imports the Player class
+from player import Player
 from game_logic import (
     get_alive_players,
     get_players_hit,
@@ -13,7 +14,10 @@ from game_logic import (
     validate_position,
     validate_target,
 )
+
+
 class GameManager:
+
     def __init__(self, code):
         self.code = code
         self.players = []
@@ -28,7 +32,7 @@ class GameManager:
         self.phase = phase
         self.phase_id += 1
 
-    # ---------- the arena ----------
+    # the arena is a rectangle that shrinks every time nobody gets hit. The arena is always centred in the 640x360 browser window.
     def arena(self):
         # the playable area (x0, y0, x1, y1), centred, getting smaller every time nobody gets hit
         scale = max(MIN_ARENA_SCALE, SHRINK_FACTOR ** self.shrink_level)
@@ -36,7 +40,7 @@ class GameManager:
         x0, y0 = (ARENA_W - w) / 2, (ARENA_H - h) / 2
         return (round(x0, 1), round(y0, 1), round(x0 + w, 1), round(y0 + h, 1))
 
-    # ---------- players ----------
+    # players can join and leave at any time, even in the middle of a game. The game continues with whoever is left.
     def is_full(self):
         return len(self.players) >= MAX_PLAYERS
 
@@ -44,7 +48,6 @@ class GameManager:
         return len(self.players) == 0
 
     def accepting_players(self):
-        # people can only join while the room is still in the lobby
         return self.phase == "waiting" and not self.is_full()
 
     def get_player(self, sid):
@@ -80,6 +83,24 @@ class GameManager:
             "winner": winner.slot if winner else None,
             "winner_name": winner.name if winner else None,
         }
+
+    def reset_to_lobby(self, phase_id):
+        # after a finished game everyone goes back to the waiting room together.
+        # returns False if this timer is stale
+        with self.lock:
+            if self.phase != "over" or phase_id != self.phase_id:
+                return False
+
+            for player in self.players:
+                player.alive = True
+                player.position = None
+                player.laser_target = None
+
+            self.ready.clear()
+            self.round_number = 0
+            self.shrink_level = 0
+            self._set_phase("waiting")
+            return True
 
     def remove_player(self, sid):
         # returns (result, action, over):
@@ -123,7 +144,7 @@ class GameManager:
 
             return None, None, None
 
-    # ---------- ready ----------
+    # ready buttons are clicked at different times by different players, so the game waits until everyone is ready before starting or advancing.
     def toggle_ready(self, sid):
         # returns "start" (the game begins), "advance" (the next round begins) or None
         with self.lock:
@@ -161,7 +182,7 @@ class GameManager:
                 return True
             return False
 
-    # ---------- the game and its rounds ----------
+    # the game and its rounds are played at the players' own pace, but the game manager keeps track of the state and enforces time limits.
     def start_match(self):
         with self.lock:
             for player in self.players:
@@ -227,8 +248,9 @@ class GameManager:
             if not player.alive:
                 return False, "You are out of this game."
 
-            if player.position is not None:
-                return False, "You already chose your spot."
+            # clicking again simply moves you, until the moment you fire
+            if player.laser_target is not None:
+                return False, "You already fired, so you can't move."
 
             position, error = validate_position(x, y, self.arena())
             if error:
@@ -268,7 +290,7 @@ class GameManager:
 
             return True, None, None
 
-    # ---------- running out of time ----------
+    # running out of time is handled by the server, which calls these methods to force a player to place or fire.
     def force_place(self, phase_id):
         # placing time is up: anyone who hasn't chosen a spot gets a random one.
         # returns the list of (player, position) that were assigned, or None if this timer is stale
