@@ -1,6 +1,5 @@
 // Vexel sound: every sound and the music are generated in the browser with the Web Audio API.
-// There are no audio files to download. Browsers only allow sound after a click or tap,
-// so Sound.unlock() is called on the first one.
+
 const Sound = (() => {
   let ctx = null, master = null, musicBus = null;
   let muted = false, musicOn = false, nextNoteTime = 0, step = 0;
