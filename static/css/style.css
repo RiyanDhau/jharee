@@ -1,58 +1,89 @@
-:root{--bg:#14062e;--ink:#fff7e0;--pink:#ff4fd8;--yel:#ffe14f;--mute:#a894d8;
+:root{--bg:#14062e;--ink:#fff7e0;--pink:#ff4fd8;--yel:#ffe14f;--mute:#a894d8;--green:#5dff9c;--red:#ff6b86;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark}
 *,*::before,*::after{box-sizing:inherit}
 [hidden]{display:none!important}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"Press Start 2P","Courier New",monospace;
-display:flex;flex-direction:column;align-items:center;gap:14px;padding:16px 10px 24px;min-height:100vh;
+display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 12px 18px;min-height:100vh;
 background-image:radial-gradient(circle at 50% -10%,#3b1580 0,transparent 60%)}
-h1{margin:6px 0 0;font-size:clamp(20px,5.5vw,38px);letter-spacing:2px;text-align:center;line-height:1.2;
-color:var(--yel);text-shadow:3px 3px 0 var(--pink),6px 6px 0 #6a1fb0}
+h1{margin:2px 0 0;font-size:clamp(18px,3vw,28px);letter-spacing:3px;text-align:center;line-height:1.2;
+color:var(--yel);text-shadow:3px 3px 0 var(--pink),5px 5px 0 #6a1fb0}
+
+/* lobby */
 .panel{display:flex;flex-direction:column;align-items:center;gap:14px;border:3px solid var(--mute);padding:22px;
-width:min(100%,420px);font-size:11px;text-align:center}
+width:min(100%,420px);font-size:11px;text-align:center;margin-top:20px}
 .panel p{margin:0;color:var(--mute)}
-#lobbyErr{color:#ff6b86;min-height:1.4em;line-height:1.6}
+#lobbyNote{color:var(--yel);line-height:1.7}
+#lobbyNote:empty{display:none}
+#lobbyErr{color:var(--red);min-height:1.4em;line-height:1.6}
 input{font:inherit;font-size:13px;width:100%;padding:12px;color:var(--ink);background:#241046;border:3px solid var(--mute);
 border-radius:0;text-align:center}
 input:focus-visible{outline:3px solid var(--yel);outline-offset:2px}
-#game{width:min(100%,1200px);display:flex;flex-direction:column;gap:14px;align-items:center}
-#game[hidden]{display:none}
-.wrap{position:relative;width:100%}
+
+/* game: players on the left, arena on the right */
+#game{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;width:min(100%,1600px);align-items:start}
+.side{display:flex;flex-direction:column;gap:10px}
+.room{border:3px solid var(--mute);padding:10px;font-size:10px;text-align:center;color:var(--mute)}
+.room b{display:block;margin-top:8px;font-size:22px;letter-spacing:5px;color:var(--yel)}
+.note{min-height:12px;font-size:9px;color:var(--green);text-align:center}
+.main{min-width:0;display:flex;flex-direction:column;gap:10px;align-items:center}
+#top{width:100%;display:flex;gap:10px}
+.card{border:3px solid var(--mute);padding:10px 12px;font-size:11px;line-height:1.7;text-align:center;min-height:54px;
+display:flex;align-items:center;justify-content:center}
+#msg{flex:1 1 auto;border-color:var(--yel);color:var(--yel)}
+#timer{flex:none;min-width:84px;font-size:16px;color:var(--ink)}
+#timer:empty{display:none}
+#timer.low{color:var(--red);border-color:var(--red)}
+
+/* the arena is as big as fits the window: its width is limited by the height that is left on screen */
+.wrap{position:relative;width:min(100%,calc((100vh - 150px) * 1.7778))}
 canvas{display:block;width:100%;height:auto;image-rendering:pixelated;background:#000;border:4px solid var(--pink);
 box-shadow:0 0 0 4px #14062e,0 0 28px #ff4fd899;cursor:crosshair;touch-action:none}
 .wrap::after{content:"";position:absolute;inset:4px;pointer-events:none;
 background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px)}
-#hud{width:100%;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
-.card{border:3px solid var(--mute);padding:12px;font-size:11px;line-height:1.7;text-align:center;min-height:62px;
-display:flex;align-items:center;justify-content:center}
-#msg{flex:3 1 260px;border-color:var(--yel);color:var(--yel)}
-#score{flex:1 1 180px}
+
+/* banners on top of the arena */
+.spec{position:absolute;top:12px;left:12px;z-index:2;font-size:10px;color:var(--red);background:rgba(10,3,25,.75);
+padding:7px 9px;border:2px solid var(--red);pointer-events:none}
+.banner{position:absolute;left:4px;right:4px;top:50%;transform:translateY(-50%);z-index:3;text-align:center;
+font-size:clamp(14px,3.4vw,36px);line-height:1.4;color:var(--red);text-shadow:3px 3px 0 #14062e;
+background:rgba(10,3,25,.8);padding:20px 8px;pointer-events:none;animation:pop .35s ease-out}
+@keyframes pop{from{transform:translateY(-50%) scale(.6);opacity:0}to{transform:translateY(-50%) scale(1);opacity:1}}
+.end{position:absolute;inset:4px;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;
+gap:18px;background:rgba(10,3,25,.84);text-align:center;padding:12px}
+#endText{font-size:clamp(20px,6vw,44px);line-height:1.3;color:var(--yel);text-shadow:3px 3px 0 var(--pink)}
+#endSub{font-size:10px;color:var(--mute);line-height:1.7}
+
+/* players list */
+.roster{width:100%;max-height:300px;overflow-y:auto;border:3px solid var(--mute);padding:12px;font-size:10px;
+display:flex;flex-direction:column;gap:10px}
+.rtitle{color:var(--yel);font-size:11px}
+.rrow{display:flex;align-items:center;gap:8px}
+.dot{width:14px;height:14px;flex:none;border:2px solid #14062e;box-shadow:0 0 0 2px var(--ink)}
+.rname{flex:1;overflow-wrap:anywhere;line-height:1.5}
+.rtag{color:var(--mute);font-size:8px}
+.rtag.ready,.rtag.playing{color:var(--green)}
+.rrow.out{opacity:.6}
+.rrow.out .rname{text-decoration:line-through}
+.rrow.out .rtag{color:var(--red)}
+
+/* buttons */
 .btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.btns:empty{display:none}
+#btns button{width:100%}
 button{font:inherit;font-size:12px;padding:12px 16px;color:#14062e;background:var(--yel);border:0;cursor:pointer;
 box-shadow:0 5px 0 #b08a00;border-radius:0}
+.btns.small button{flex:1;font-size:9px;padding:9px 8px}
 button:active{transform:translateY(4px);box-shadow:0 1px 0 #b08a00}
 button:focus-visible{outline:3px solid #fff;outline-offset:3px}
 button.go{background:var(--pink);box-shadow:0 5px 0 #a0207f}
-small{font-size:9px;color:var(--mute);text-align:center;line-height:1.8;max-width:760px}
-@media (prefers-reduced-motion:reduce){button:active{transform:none}}
+small{font-size:9px;color:var(--mute);text-align:center;line-height:1.8;max-width:900px}
 
-/* message bar above the arena, and the players list below it */
-#top{width:100%;display:flex;gap:10px}
-#top #msg{flex:1 1 auto;width:auto}
-#timer{flex:none;min-width:84px;font-size:16px;color:var(--ink)}
-#timer:empty{display:none}
-#timer.low{color:#ff6b86;border-color:#ff6b86}
-.roster{width:100%;max-height:300px;overflow-y:auto;border:3px solid var(--mute);padding:14px;font-size:11px;display:flex;flex-direction:column;gap:10px}
-.rtitle{color:var(--yel);font-size:12px}
-.rrow{display:flex;align-items:center;gap:10px}
-.dot{width:14px;height:14px;flex:none;border:2px solid #14062e;box-shadow:0 0 0 2px var(--ink)}
-.rname{flex:1;overflow-wrap:anywhere}
-.rtag{color:var(--mute);font-size:10px}
-.rrow.out{opacity:.55}
-.rrow.out .rname{text-decoration:line-through}
-.rrow.out .rtag{color:#ff6b86}
-
-/* game over screen on top of the arena */
-.end{position:absolute;inset:4px;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;
-gap:22px;background:rgba(10,3,25,.82);text-align:center;padding:12px}
-#endText{font-size:clamp(20px,6vw,44px);line-height:1.3;color:var(--yel);text-shadow:3px 3px 0 var(--pink)}
-.rtag.ready{color:#5dff9c}
+/* phones: players list goes under the arena */
+@media (max-width:860px){
+  #game{grid-template-columns:1fr}
+  .main{order:1}
+  .side{order:2}
+  .wrap{width:100%}
+}
+@media (prefers-reduced-motion:reduce){button:active{transform:none}.banner{animation:none}}
