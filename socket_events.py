@@ -1,7 +1,7 @@
 from flask import request
 from flask_socketio import emit, join_room, leave_room
 
-from constants import MAX_NAME_LENGTH, PLACE_SECONDS, AIM_SECONDS
+from constants import MAX_NAME_LENGTH, PLACE_SECONDS, AIM_SECONDS, RESULT_SECONDS
 
 
 def clean_name(raw, fallback):
@@ -72,6 +72,17 @@ def register_socket_events(socketio, rooms):
         result = game.force_resolve(phase_id)
         if result is not None:
             socketio.emit("reveal", result, to=game.code)
+            finish_game(game)
+
+    def finish_game(game):
+        # once a game is over, the winner screen shows for a while, then everyone returns to the waiting room
+        if game.phase == "over":
+            after(RESULT_SECONDS, game, game.phase_id, back_to_lobby)
+
+    def back_to_lobby(game, phase_id):
+        if game.reset_to_lobby(phase_id):
+            socketio.emit("back_to_lobby", {}, to=game.code)
+            send_lobby(game)
 
     # ---------- lobby ----------
     @socketio.on("create_room")
@@ -150,6 +161,7 @@ def register_socket_events(socketio, rooms):
         # everyone fired: send the reveal to the whole room
         if result is not None:
             socketio.emit("reveal", result, to=game.code)
+            finish_game(game)
         else:
             send_counts(game)
 
@@ -172,8 +184,10 @@ def register_socket_events(socketio, rooms):
 
         if result is not None:
             socketio.emit("reveal", result, to=game.code)
+            finish_game(game)
         elif over is not None:
             socketio.emit("game_over", over, to=game.code)
+            finish_game(game)
         elif action is not None:
             run_action(game, action)
         elif game.phase == "playing":
