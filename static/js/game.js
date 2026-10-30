@@ -1,7 +1,8 @@
-// Browser side of Pixel Pop: Laser Duel. All secret information stays on the server:
+// Vexel, browser side. All secret information stays on the server:
 // this page only ever knows your own position until the reveal arrives.
+// Keep W, H, MIN_AIM and MARGIN in sync with constants.py (ARENA_W, ARENA_H, MIN_AIM_DISTANCE, EDGE_MARGIN).
 
-const W = 480, H = 270, TILE = 30, MIN_AIM = 10, MARGIN = 10;
+const W = 640, H = 360, TILE = 40, MIN_AIM = 14, MARGIN = 16, PX = 3;
 const BASE_COLORS = [
   { body: "#3b8cff", beam: "#2dc4ff" },   // slot 0: blue
   { body: "#ff3b6b", beam: "#ff2d55" },   // slot 1: red
@@ -27,7 +28,7 @@ const socket = io();
 // phase: lobby, waiting, place, aim, locked, spectate, fire, result, over
 let phase = "lobby";
 let slot = 0, roomCode = "", names = [], joined = [], readySlots = [], aliveSlots = null, winnerSlot = null;
-let isAlive = true, canReady = false, iAmReady = false;
+let isAlive = true, canReady = false, iAmReady = false, moveArmed = false;
 let arenaFrom = [0, 0, W, H], arenaTo = [0, 0, W, H], arenaT0 = -1e9;   // the playable area, shrinks over time
 let pendingPos = null, myPos = null, target = null, mouse = null;
 let reveal = null, t0 = 0, resolved = false, parts = [], shake = 0;
@@ -58,7 +59,7 @@ function clampAim(p) {   // where you can aim
 // ---------- small UI helpers ----------
 function setMsg(text) { $("msg").textContent = text; }
 
-// the players list: colour, name and a sign showing READY / IN / OUT
+// the players list on the left: colour, name and a sign (READY / NOT READY / PLAYING / ELIMINATED / WINNER)
 function renderScore() {
   const box = $("roster");
   box.textContent = "";
@@ -73,10 +74,10 @@ function renderScore() {
     const ready = readySlots.includes(i);
     const showReady = phase === "waiting" || phase === "result";
 
-    let text = "IN", cls = "rtag";
-    if (phase === "over") text = i === winnerSlot ? "WINNER" : out ? "OUT" : "";
-    else if (out) text = "OUT";
-    else if (showReady) { text = ready ? "READY" : "NOT READY"; if (ready) cls += " ready"; }
+    let text = "PLAYING", cls = "rtag playing";
+    if (phase === "over") { text = i === winnerSlot ? "WINNER" : out ? "ELIMINATED" : ""; cls = "rtag"; }
+    else if (out) { text = "ELIMINATED"; cls = "rtag"; }
+    else if (showReady) { text = ready ? "READY" : "NOT READY"; cls = "rtag" + (ready ? " ready" : ""); }
 
     const row = document.createElement("div");
     row.className = "rrow" + (out ? " out" : "");
@@ -98,25 +99,49 @@ function renderButtons() {
   if (phase === "waiting") {
     html = iAmReady ? '<button data-act="ready">NOT READY</button>' : '<button class="go" data-act="ready">READY</button>';
   }
-  if (phase === "aim" && TOUCH) html = '<button class="go" data-act="fire">FIRE</button>';   // phones only
+  if (phase === "aim" && TOUCH) {   // phones: no mouse, so buttons for moving and firing
+    html = '<button data-act="move">MOVE</button><button class="go" data-act="fire">FIRE</button>';
+  }
   if (phase === "result" && canReady && !iAmReady) html = '<button class="go" data-act="ready">READY</button>';
   $("btns").innerHTML = html;
 }
 function showGame() { $("lobby").hidden = true; $("game").hidden = false; }
 function waitingMsg() {
   const n = joined.length;
-  return `Room ${roomCode}: ${n} player${n === 1 ? "" : "s"} here. ` +
-    (n < 2 ? "Share the code and wait for someone to join!"
-           : "Click READY. The game starts when everyone is ready!");
+  return `Waiting for the game to start. ${n} player${n === 1 ? "" : "s"} here. ` +
+    (n < 2 ? "Share the link and wait for someone to join!" : "Click READY. It starts when everyone is ready!");
 }
 function aimHint() {
-  return TOUCH ? "Touch the arena to point the laser, then tap FIRE!"
-               : "Move your mouse to point the laser, then press ENTER to fire!";
+  return TOUCH ? "Touch the arena to aim, then tap FIRE. Tap MOVE to change your spot!"
+               : "Move your mouse to aim, press ENTER to fire. Click to move your spot!";
+}
+
+// ---------- invite link: opening ?room=ABCD fills the room code in ----------
+const inviteCode = (new URLSearchParams(location.search).get("room") || "").toUpperCase().slice(0, 4);
+if (inviteCode) {
+  $("code").value = inviteCode;
+  $("lobbyNote").textContent = `You were invited to room ${inviteCode}! Type your name and click JOIN.`;
+  $("name").focus();
+}
+function copyText(text, note) {
+  const done = () => {
+    $("copyNote").textContent = note;
+    setTimeout(() => { $("copyNote").textContent = ""; }, 1800);
+  };
+  const fallback = () => {   // works on plain http and old browsers
+    const t = document.createElement("textarea");
+    t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); done(); } catch (e) { setMsg("Copy this: " + text); }
+    t.remove();
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
 }
 
 // ---------- lobby buttons ----------
-$("create").onclick = () => socket.emit("create_room", { name: $("name").value });
-$("join").onclick = () => socket.emit("join_game", { name: $("name").value, code: $("code").value });
+$("create").onclick = () => { Sound.unlock(); socket.emit("create_room", { name: $("name").value }); };
+$("join").onclick = () => { Sound.unlock(); socket.emit("join_game", { name: $("name").value, code: $("code").value }); };
 $("code").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase(); });
 
 // ---------- actions ----------
@@ -134,30 +159,43 @@ function fire() {
 function toggleReady() {
   if (phase === "waiting") {
     iAmReady = !iAmReady;
+    Sound.play(iAmReady ? "ready" : "unready");
     socket.emit("toggle_ready");
     renderButtons();
   } else if (phase === "result" && canReady && !iAmReady) {
     iAmReady = true;
+    Sound.play("ready");
     socket.emit("toggle_ready");
     setMsg("You are ready! Waiting for the others...");
     renderButtons();
   }
 }
 document.addEventListener("click", (e) => {
+  Sound.unlock();   // browsers only allow sound after a click
   const act = e.target.dataset ? e.target.dataset.act : null;
   if (act === "ready") toggleReady();
   if (act === "fire") fire();
+  if (act === "move") { moveArmed = true; setMsg("Tap the arena where you want to stand."); }
+  if (act === "copylink") copyText(`${location.origin}/?room=${roomCode}`, "Invite link copied!");
+  if (act === "copycode") copyText(roomCode, "Room code copied!");
+  if (act === "mute") { Sound.toggleMute(); $("mute").textContent = Sound.isMuted() ? "SOUND OFF" : "SOUND ON"; }
   if (act === "home") location.reload();   // leaves the room and goes back to the start page
 });
+$("mute").textContent = Sound.isMuted() ? "SOUND OFF" : "SOUND ON";
 addEventListener("keydown", (e) => {
+  Sound.unlock();
   const tag = document.activeElement.tagName;
+  if (phase === "lobby" && e.key === "Enter") {   // Enter in the lobby: join if there is a code, otherwise create
+    ($("code").value.trim() ? $("join") : $("create")).click();
+    return;
+  }
   if ((e.key === "Enter" || e.key === " ") && tag !== "BUTTON" && tag !== "INPUT") {
     if (phase === "aim") fire(); else toggleReady();
     e.preventDefault();
   }
 });
 
-// ---------- mouse: click to stand somewhere, then move the mouse to point the laser ----------
+// ---------- mouse: click to stand somewhere (click again to move), move the mouse to aim ----------
 function pos(e) {
   const r = cv.getBoundingClientRect();
   return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H];
@@ -165,12 +203,33 @@ function pos(e) {
 cv.addEventListener("pointermove", (e) => { mouse = pos(e); });
 cv.addEventListener("pointerdown", (e) => {
   mouse = pos(e);
-  if (phase === "place") {
-    // clicking picks your spot (kept inside the glowing area) and locks it straight away
+  // clicking picks your spot (kept inside the glowing area). Until you fire you can click again to move.
+  // on phones, taps aim, so a tap only moves you after you press MOVE
+  if (phase === "place" || (phase === "aim" && (!TOUCH || moveArmed))) {
+    moveArmed = false;
     pendingPos = clampPos(mouse);
     socket.emit("submit_position", { x: pendingPos[0], y: pendingPos[1] });
   }
 });
+
+// ---------- the eliminated banner and the winner screen ----------
+function showElim() {
+  $("elim").hidden = false;
+  $("spec").hidden = false;
+  setTimeout(() => { $("elim").hidden = true; }, 2600);
+}
+function showEnd(winner, name) {
+  phase = "over";
+  winnerSlot = winner;
+  canReady = false;
+  placeDeadline = null; roundDeadline = null;
+  $("endText").textContent = winner === null ? "NOBODY WINS!" : winner === slot ? "YOU WON!" : `${name} WINS!`;
+  $("end").hidden = false;
+  setMsg("Game over!");
+  Sound.play(winner === slot ? "win" : "lose");
+  renderScore();
+  renderButtons();
+}
 
 // ---------- messages from the server ----------
 socket.on("room_joined", (d) => {
@@ -178,12 +237,14 @@ socket.on("room_joined", (d) => {
   roomCode = d.code;
   phase = "waiting";
   showGame();
+  $("codeShow").textContent = roomCode;
   renderButtons();
   setMsg(waitingMsg());
 });
 
 socket.on("lobby_update", (d) => {
   roomCode = d.code;
+  $("codeShow").textContent = roomCode;
   names = [];
   d.players.forEach((p) => { names[p.slot] = p.name; });
   joined = d.players.map((p) => p.slot);
@@ -199,28 +260,36 @@ socket.on("round_start", (d) => {
   isAlive = d.alive;
   aliveSlots = d.alive_slots;
   readySlots = d.ready_slots || [];
-  iAmReady = false; canReady = false;
+  iAmReady = false; canReady = false; moveArmed = false;
   const shrank = setArena(d.arena);
   target = null; reveal = null; parts = []; myPos = null; pendingPos = null;
+  $("end").hidden = true;
   placeDeadline = performance.now() + (d.place_seconds || 40) * 1000;
   roundDeadline = performance.now() + (d.round_seconds || 70) * 1000;
+  if (d.round === 1) Sound.play("start");
+  else if (shrank) Sound.play("shrink");
   if (d.alive) {
     phase = "place";
+    $("spec").hidden = true;
     setMsg(`${shrank ? "The room shrank! " : ""}Round ${d.round}: ${d.alive_count} players left. Click where you want to stand.`);
   } else {
     phase = "spectate";
-    setMsg(`You are out! Watching round ${d.round}...`);
+    $("spec").hidden = false;
+    setMsg(`You are eliminated. Watching round ${d.round}...`);
   }
   renderScore();
   renderButtons();
 });
 
-// you chose your spot: you can aim straight away, you don't wait for the others
+// you chose (or changed) your spot: you can aim straight away, you don't wait for the others
 socket.on("position_locked", () => {
   myPos = pendingPos;
-  phase = "aim";
-  renderButtons();
-  setMsg(aimHint());
+  if (phase === "place" || phase === "aim") {
+    phase = "aim";
+    Sound.play("place");
+    renderButtons();
+    setMsg(aimHint());
+  }
 });
 
 // time ran out while placing: the server put you at a random spot
@@ -233,6 +302,7 @@ socket.on("position_assigned", (d) => {
 
 socket.on("target_locked", () => {
   phase = "locked";
+  Sound.play("lock");
   renderButtons();
   setMsg("Fired! Waiting for the others...");
 });
@@ -252,12 +322,27 @@ socket.on("reveal", (d) => {
   resolved = false;
   placeDeadline = null; roundDeadline = null;
   d.players.forEach((p) => { p.dead = false; });
+  Sound.play("zap");
   renderButtons();
   setMsg("FIRE!");
 });
 
 // everyone else left, so the game ended early
 socket.on("game_over", (d) => showEnd(d.winner, d.winner_name));
+
+// after a game: everyone goes back to the waiting room together
+socket.on("back_to_lobby", () => {
+  $("end").hidden = true; $("elim").hidden = true; $("spec").hidden = true;
+  phase = "waiting";
+  reveal = null; myPos = null; pendingPos = null; target = null; parts = [];
+  aliveSlots = null; winnerSlot = null; readySlots = [];
+  iAmReady = false; canReady = false;
+  placeDeadline = null; roundDeadline = null;
+  setArena([0, 0, W, H]);
+  setMsg(waitingMsg());
+  renderScore();
+  renderButtons();
+});
 
 socket.on("error_msg", (d) => {
   if (phase === "lobby") { $("lobbyErr").textContent = d.message; return; }
@@ -271,14 +356,14 @@ function sprite(x, y, body, bob) {
     [...row].forEach((ch, c) => {
       if (ch === ".") return;
       ctx.fillStyle = ch === "X" ? body : ch === "W" ? "#fff" : "#14062e";
-      ctx.fillRect(Math.round(x - 8 + c * 2), Math.round(y - 8 + r * 2 + bob), 2, 2);
+      ctx.fillRect(Math.round(x - 4 * PX + c * PX), Math.round(y - 4 * PX + r * PX + bob), PX, PX);
     });
   });
 }
 function drawPlayer(x, y, s, now) {
   ctx.fillStyle = "rgba(0,0,0,.35)";
-  ctx.fillRect(x - 7, y + 8, 14, 3);
-  sprite(x, y, colorFor(s).body, Math.round(Math.sin(now / 220 + s * 2)));
+  ctx.fillRect(x - 10, y + 12, 20, 4);
+  sprite(x, y, colorFor(s).body, Math.round(Math.sin(now / 220 + s * 2) * 1.5));
 }
 function floor() {
   for (let x = 0; x < W / TILE; x++) for (let y = 0; y < H / TILE; y++) {
@@ -293,25 +378,25 @@ function drawArena(a) {
   ctx.fillRect(0, 0, W, y0); ctx.fillRect(0, y1, W, H - y1);
   ctx.fillRect(0, y0, x0, y1 - y0); ctx.fillRect(x1, y0, W - x1, y1 - y0);
   ctx.save();
-  ctx.shadowColor = "#ff4fd8"; ctx.shadowBlur = 8;
-  ctx.strokeStyle = "#ff4fd8"; ctx.lineWidth = 2;
-  ctx.strokeRect(x0 + 1, y0 + 1, x1 - x0 - 2, y1 - y0 - 2);
+  ctx.shadowColor = "#ff4fd8"; ctx.shadowBlur = 10;
+  ctx.strokeStyle = "#ff4fd8"; ctx.lineWidth = 3;
+  ctx.strokeRect(x0 + 1.5, y0 + 1.5, x1 - x0 - 3, y1 - y0 - 3);
   ctx.restore();
 }
 function mark(tx, ty, s) {
-  ctx.strokeStyle = colorFor(s).beam; ctx.lineWidth = 1;
-  ctx.strokeRect(Math.round(tx) - 3, Math.round(ty) - 3, 6, 6);
+  ctx.strokeStyle = colorFor(s).beam; ctx.lineWidth = 1.5;
+  ctx.strokeRect(Math.round(tx) - 4, Math.round(ty) - 4, 8, 8);
 }
 function cross(x, y, c) {
   ctx.fillStyle = c;
-  ctx.fillRect(x - 7, y, 4, 1); ctx.fillRect(x + 4, y, 4, 1);
-  ctx.fillRect(x, y - 7, 1, 4); ctx.fillRect(x, y + 4, 1, 4);
+  ctx.fillRect(x - 12, y - 1, 7, 2); ctx.fillRect(x + 5, y - 1, 7, 2);
+  ctx.fillRect(x - 1, y - 12, 2, 7); ctx.fillRect(x - 1, y + 5, 2, 7);
 }
 function previewBeam(from, to, s) {
   // your own aiming beam: only drawn in your browser, nobody else ever sees it
   const c = colorFor(s).beam;
   ctx.save();
-  ctx.shadowColor = c; ctx.shadowBlur = 8; ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.globalAlpha = .85;
+  ctx.shadowColor = c; ctx.shadowBlur = 10; ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.globalAlpha = .85;
   ctx.beginPath(); ctx.moveTo(from[0], from[1]); ctx.lineTo(to[0], to[1]); ctx.stroke();
   ctx.restore();
 }
@@ -323,32 +408,19 @@ function beams(el) {
     const len = L * grow, x1 = p.x + dx / L * len, y1 = p.y + dy / L * len;
     const c = colorFor(p.slot).beam;
     ctx.save();
-    ctx.shadowColor = c; ctx.shadowBlur = 14; ctx.strokeStyle = c; ctx.lineWidth = 4 + Math.random();
+    ctx.shadowColor = c; ctx.shadowBlur = 16; ctx.strokeStyle = c; ctx.lineWidth = 6 + Math.random() * 1.5;
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(x1, y1); ctx.stroke();
-    ctx.shadowBlur = 0; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+    ctx.shadowBlur = 0; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(x1, y1); ctx.stroke();
     ctx.restore();
   });
 }
 function boom(p) {
-  for (let i = 0; i < 36; i++) {
-    parts.push({ x: p.x, y: p.y, vx: (Math.random() - .5) * 3.5, vy: (Math.random() - .5) * 3.5,
+  for (let i = 0; i < 48; i++) {
+    parts.push({ x: p.x, y: p.y, vx: (Math.random() - .5) * 5, vy: (Math.random() - .5) * 5,
                  c: i % 3 ? colorFor(p.slot).body : "#fff", l: 1 });
   }
-  shake = 7;
-}
-
-// the game is over: show who won
-function showEnd(winner, name) {
-  phase = "over";
-  winnerSlot = winner;
-  canReady = false;
-  placeDeadline = null; roundDeadline = null;
-  $("endText").textContent = winner === null ? "NOBODY WINS!" : winner === slot ? "YOU WON!" : `${name} WINS!`;
-  $("end").hidden = false;
-  setMsg("Game over!");
-  renderScore();
-  renderButtons();
+  shake = 9;
 }
 
 function finish() {
@@ -358,16 +430,23 @@ function finish() {
 
   const hitSlots = reveal.players.filter((p) => p.hit).map((p) => p.slot);
   const iWasHit = hitSlots.includes(slot);
-  if (iWasHit) isAlive = false;
+  if (iWasHit) { isAlive = false; showElim(); Sound.play("eliminated"); }
 
-  if (reveal.match_over) { showEnd(reveal.winner, reveal.winner_name); return; }
+  if (reveal.match_over) {
+    // the elimination banner gets a moment before the winner screen
+    phase = "result";
+    canReady = false;
+    renderScore(); renderButtons();
+    setTimeout(() => { if (phase === "result") showEnd(reveal.winner, reveal.winner_name); }, iWasHit ? 2400 : 0);
+    return;
+  }
 
   phase = "result";
   let text = hitSlots.length === 0
     ? `Round ${reveal.round}: nobody was hit.`
     : `Round ${reveal.round}: eliminated - ${hitSlots.map((s) => names[s]).join(", ")}`;
   if (reveal.shrinking) text += " The room is shrinking!";
-  if (iWasHit) text = "YOU GOT HIT! " + text;
+  if (iWasHit) text = "YOU WERE ELIMINATED! " + text;
 
   // only the survivors click READY for the next round
   canReady = isAlive;
@@ -390,6 +469,7 @@ function updateTimer(now) {
     lastSec = s;
     el.textContent = s + "s";
     el.classList.toggle("low", s <= 10);
+    if (s <= 5 && s > 0 && phase !== "spectate") Sound.play("tick");
   }
 }
 
@@ -428,14 +508,16 @@ function loop(now) {
     reveal.players.forEach((p) => { if (!p.dead) drawPlayer(p.x, p.y, p.slot, now); });
     if (phase === "fire" && el > 450 && !resolved) {
       resolved = true;
-      reveal.players.forEach((p) => { if (p.hit) { p.dead = true; boom(p); } });
+      const hit = reveal.players.filter((p) => p.hit);
+      hit.forEach((p) => { p.dead = true; boom(p); });
+      if (hit.length) Sound.play("boom");
     }
     if (phase === "fire" && el > 1700) finish();
   }
 
   parts.forEach((q) => {
-    q.x += q.vx; q.y += q.vy; q.vy += .05; q.l -= .014;
-    ctx.fillStyle = q.c; ctx.globalAlpha = Math.max(0, q.l); ctx.fillRect(q.x | 0, q.y | 0, 2, 2);
+    q.x += q.vx; q.y += q.vy; q.vy += .06; q.l -= .014;
+    ctx.fillStyle = q.c; ctx.globalAlpha = Math.max(0, q.l); ctx.fillRect(q.x | 0, q.y | 0, 3, 3);
   });
   ctx.globalAlpha = 1;
   parts = parts.filter((q) => q.l > 0);
