@@ -3,15 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pixel Pop: Laser Duel</title>
+<title>Vexel</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-<h1>PIXEL POP<br>LASER DUEL</h1>
+<h1>VEXEL</h1>
 
-<!-- lobby: create a room or join with a code -->
+<!-- lobby: create a room or join with a code (an invite link fills the code in for you) -->
 <section id="lobby" class="panel">
+  <p id="lobbyNote"></p>
   <input id="name" maxlength="12" placeholder="Your name" aria-label="Your name" autocomplete="off">
   <button id="create" class="go">CREATE ROOM</button>
   <p>or join a friend</p>
@@ -20,23 +21,40 @@
   <p id="lobbyErr" role="alert"></p>
 </section>
 
-<!-- game screen -->
+<!-- game screen: players and READY on the left, the arena on the right -->
 <section id="game" hidden>
-  <div id="top"><div class="card" id="msg"></div><div class="card" id="timer"></div></div>
-  <div class="wrap">
-    <canvas id="c" width="480" height="270"></canvas>
-    <div id="end" class="end" hidden>
-      <div id="endText"></div>
-      <button class="go" data-act="home">BACK TO START</button>
+  <aside class="side">
+    <div class="room">ROOM <b id="codeShow"></b></div>
+    <div class="btns small">
+      <button data-act="copylink">COPY LINK</button>
+      <button data-act="copycode">COPY CODE</button>
+    </div>
+    <div id="copyNote" class="note"></div>
+    <section id="roster" class="roster"></section>
+    <div class="btns" id="btns"></div>
+    <div class="btns small">
+      <button id="mute" data-act="mute">SOUND ON</button>
+      <button data-act="home">LEAVE</button>
+    </div>
+  </aside>
+  <div class="main">
+    <div id="top"><div class="card" id="msg"></div><div class="card" id="timer"></div></div>
+    <div class="wrap">
+      <canvas id="c" width="640" height="360"></canvas>
+      <div id="spec" class="spec" hidden>SPECTATING</div>
+      <div id="elim" class="banner" hidden>YOU WERE ELIMINATED</div>
+      <div id="end" class="end" hidden>
+        <div id="endText"></div>
+        <div id="endSub">Back to the waiting room in a moment...</div>
+      </div>
     </div>
   </div>
-  <div class="btns" id="btns"></div>
-  <section id="roster" class="roster"></section>
 </section>
 
-<small>Top view, same level. Click READY when you are set; the game starts when everyone in the room is ready. Each round: click where you want to stand, then move your mouse to point your laser and press Enter to fire. Nobody sees where anyone stands or aims until everyone has fired. Lasers stop where you aim. Get shot and you are out. If nobody gets hit, the room shrinks!</small>
+<small>Top view, same level. Click READY when you are set; the game starts when everyone in the room is ready. Each round: click where you want to stand (click again to move), then move your mouse to aim and press Enter to fire. Nobody sees where anyone stands or aims until everyone has fired. Get shot and you are eliminated. If nobody gets hit, the room shrinks!</small>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/sound.js') }}"></script>
 <script src="{{ url_for('static', filename='js/game.js') }}"></script>
 </body>
 </html>
