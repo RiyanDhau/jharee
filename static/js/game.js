@@ -159,12 +159,10 @@ function fire() {
 function toggleReady() {
   if (phase === "waiting") {
     iAmReady = !iAmReady;
-    Sound.play(iAmReady ? "ready" : "unready");
     socket.emit("toggle_ready");
     renderButtons();
   } else if (phase === "result" && canReady && !iAmReady) {
     iAmReady = true;
-    Sound.play("ready");
     socket.emit("toggle_ready");
     setMsg("You are ready! Waiting for the others...");
     renderButtons();
@@ -226,7 +224,6 @@ function showEnd(winner, name) {
   $("endText").textContent = winner === null ? "NOBODY WINS!" : winner === slot ? "YOU WON!" : `${name} WINS!`;
   $("end").hidden = false;
   setMsg("Game over!");
-  Sound.play(winner === slot ? "win" : "lose");
   renderScore();
   renderButtons();
 }
@@ -266,8 +263,8 @@ socket.on("round_start", (d) => {
   $("end").hidden = true;
   placeDeadline = performance.now() + (d.place_seconds || 40) * 1000;
   roundDeadline = performance.now() + (d.round_seconds || 70) * 1000;
-  if (d.round === 1) Sound.play("start");
-  else if (shrank) Sound.play("shrink");
+  Sound.setMusic(false);   // a game is running: no music, just the game sounds
+  if (shrank) Sound.play("shrink");   // the room just got smaller
   if (d.alive) {
     phase = "place";
     $("spec").hidden = true;
@@ -302,7 +299,6 @@ socket.on("position_assigned", (d) => {
 
 socket.on("target_locked", () => {
   phase = "locked";
-  Sound.play("lock");
   renderButtons();
   setMsg("Fired! Waiting for the others...");
 });
@@ -333,6 +329,7 @@ socket.on("game_over", (d) => showEnd(d.winner, d.winner_name));
 // after a game: everyone goes back to the waiting room together
 socket.on("back_to_lobby", () => {
   $("end").hidden = true; $("elim").hidden = true; $("spec").hidden = true;
+  Sound.setMusic(true);   // back in the waiting room: the music returns
   phase = "waiting";
   reveal = null; myPos = null; pendingPos = null; target = null; parts = [];
   aliveSlots = null; winnerSlot = null; readySlots = [];
@@ -469,7 +466,6 @@ function updateTimer(now) {
     lastSec = s;
     el.textContent = s + "s";
     el.classList.toggle("low", s <= 10);
-    if (s <= 5 && s > 0 && phase !== "spectate") Sound.play("tick");
   }
 }
 
@@ -510,7 +506,7 @@ function loop(now) {
       resolved = true;
       const hit = reveal.players.filter((p) => p.hit);
       hit.forEach((p) => { p.dead = true; boom(p); });
-      if (hit.length) Sound.play("boom");
+      if (hit.length) Sound.play("boom");   // the burst when a laser hits someone
     }
     if (phase === "fire" && el > 1700) finish();
   }

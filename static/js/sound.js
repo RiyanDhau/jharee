@@ -1,9 +1,6 @@
-// Vexel sound: every sound and the music are generated in the browser with the Web Audio API.
-// There are no audio files to download. Browsers only allow sound after a click or tap,
-// so Sound.unlock() is called on the first one.
 const Sound = (() => {
   let ctx = null, master = null, musicBus = null;
-  let muted = false, musicOn = false, nextNoteTime = 0, step = 0;
+  let muted = false, musicOn = false, musicWanted = true, nextNoteTime = 0, step = 0;
   try { muted = localStorage.getItem("vexelMuted") === "1"; } catch (e) { /* storage can be blocked */ }
 
   function ensure() {
@@ -15,7 +12,7 @@ const Sound = (() => {
       master.gain.value = muted ? 0 : 0.7;
       master.connect(ctx.destination);
       musicBus = ctx.createGain();
-      musicBus.gain.value = 0.14;
+      musicBus.gain.value = musicWanted ? 0.14 : 0;
       musicBus.connect(master);
     }
     if (ctx.state === "suspended") ctx.resume();
@@ -51,20 +48,16 @@ const Sound = (() => {
 
   const N = (m) => 440 * Math.pow(2, (m - 69) / 12);   // note number -> Hz (69 = A4)
 
+  // in the game there are only a few sounds: placing yourself, the laser, the burst when someone is hit,
+  // the sad sound for the player who was eliminated, and a short jingle when the room shrinks
   const sfx = {
     place:      (t) => { tone(N(72), t, .07, "square", .18); tone(N(79), t + .06, .08, "square", .18); },
-    lock:       (t) => tone(N(76), t, .09, "square", .2),
-    ready:      (t) => { tone(N(72), t, .08); tone(N(76), t + .08, .08); tone(N(79), t + .16, .14); },
-    unready:    (t) => { tone(N(79), t, .08); tone(N(72), t + .08, .12); },
     zap:        (t) => { tone(1600, t, .28, "sawtooth", .16, 120); tone(900, t, .2, "square", .08, 100); },
     boom:       (t) => { noise(t, .5, .5, 900); tone(120, t, .4, "triangle", .3, 40); },
+    // the room shrinks: a low rumble and a quick falling jingle
+    shrink:     (t) => { noise(t, .5, .18, 400); tone(180, t, .5, "sawtooth", .14, 60);
+                         [79, 76, 72, 67].forEach((m, i) => tone(N(m), t + .05 + i * .09, .1, "square", .16)); },
     eliminated: (t) => { [67, 64, 60, 55].forEach((m, i) => tone(N(m), t + i * .16, .22, "triangle", .28)); },
-    win:        (t) => { [72, 76, 79, 84, 79, 84].forEach((m, i) => tone(N(m), t + i * .12, .16, "square", .2));
-                         tone(N(88), t + .72, .4, "square", .2); },
-    lose:       (t) => { [67, 65, 64, 60].forEach((m, i) => tone(N(m), t + i * .2, .25, "triangle", .22)); },
-    shrink:     (t) => { tone(180, t, .5, "sawtooth", .15, 60); noise(t, .4, .15, 400); },
-    start:      (t) => { [60, 64, 67, 72].forEach((m, i) => tone(N(m), t + i * .09, .12, "square", .2)); },
-    tick:       (t) => tone(N(84), t, .04, "square", .12),
   };
 
   function play(name) {
@@ -80,6 +73,7 @@ const Sound = (() => {
                   55, 0, 55, 0, 55, 0, 59, 0,   48, 0, 55, 0, 48, 0, 43, 0];
 
   function schedule() {
+    if (!musicWanted) { nextNoteTime = ctx.currentTime + 0.1; return; }   // no music during a game
     while (nextNoteTime < ctx.currentTime + 0.3) {
       const i = step % MELODY.length;
       if (MELODY[i]) tone(N(MELODY[i]), nextNoteTime, .16, "square", .5, null, musicBus);
@@ -98,6 +92,11 @@ const Sound = (() => {
   return {
     unlock() { if (ensure()) startMusic(); },
     play,
+    // music on = waiting room, music off = a game is running (it fades out/in)
+    setMusic(on) {
+      musicWanted = on;
+      if (musicBus) musicBus.gain.setTargetAtTime(on ? 0.14 : 0, ctx.currentTime, 0.15);
+    },
     isMuted: () => muted,
     toggleMute() {
       muted = !muted;
