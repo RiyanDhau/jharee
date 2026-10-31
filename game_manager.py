@@ -17,6 +17,17 @@ from game_logic import (
 
 
 class GameManager:
+    """One game (one room). It holds the secret positions and targets and decides who gets hit.
+
+    LOBBY: anyone can join. Everyone clicks READY and the game starts when all are ready.
+    THE GAME is played in rounds. In every round each player does two secret things, at their own pace:
+      1. click where to stand
+      2. point the laser and fire (nobody has to wait for the others to place first)
+    Once everyone has fired (or time runs out) everything is revealed at once.
+    You are out the moment you get shot. If a round passes with nobody hit, the arena shrinks.
+    After each round the survivors click READY for the next one.
+    The game ends when one player (or nobody) is left. There are no scores: just a winner.
+    """
 
     def __init__(self, code):
         self.code = code
@@ -32,7 +43,7 @@ class GameManager:
         self.phase = phase
         self.phase_id += 1
 
-    # the arena is a rectangle that shrinks every time nobody gets hit. The arena is always centred in the 640x360 browser window.
+    # ---------- the arena ----------
     def arena(self):
         # the playable area (x0, y0, x1, y1), centred, getting smaller every time nobody gets hit
         scale = max(MIN_ARENA_SCALE, SHRINK_FACTOR ** self.shrink_level)
@@ -40,7 +51,7 @@ class GameManager:
         x0, y0 = (ARENA_W - w) / 2, (ARENA_H - h) / 2
         return (round(x0, 1), round(y0, 1), round(x0 + w, 1), round(y0 + h, 1))
 
-    # players can join and leave at any time, even in the middle of a game. The game continues with whoever is left.
+    # ---------- players ----------
     def is_full(self):
         return len(self.players) >= MAX_PLAYERS
 
@@ -48,6 +59,7 @@ class GameManager:
         return len(self.players) == 0
 
     def accepting_players(self):
+        # people can only join while the room is still in the lobby
         return self.phase == "waiting" and not self.is_full()
 
     def get_player(self, sid):
@@ -144,7 +156,7 @@ class GameManager:
 
             return None, None, None
 
-    # ready buttons are clicked at different times by different players, so the game waits until everyone is ready before starting or advancing.
+    # ---------- ready ----------
     def toggle_ready(self, sid):
         # returns "start" (the game begins), "advance" (the next round begins) or None
         with self.lock:
@@ -182,7 +194,7 @@ class GameManager:
                 return True
             return False
 
-    # the game and its rounds are played at the players' own pace, but the game manager keeps track of the state and enforces time limits.
+    # ---------- the game and its rounds ----------
     def start_match(self):
         with self.lock:
             for player in self.players:
@@ -290,7 +302,7 @@ class GameManager:
 
             return True, None, None
 
-    # running out of time is handled by the server, which calls these methods to force a player to place or fire.
+    # ---------- running out of time ----------
     def force_place(self, phase_id):
         # placing time is up: anyone who hasn't chosen a spot gets a random one.
         # returns the list of (player, position) that were assigned, or None if this timer is stale
