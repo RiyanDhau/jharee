@@ -14,11 +14,11 @@ class RoomManager:
         self.lock = threading.Lock()
 
     def create_room(self):
-        with self.lock: #acquires the lock so another thread cannot simultaneously enter a protected section using the same lock.
-            code = self._new_code()  #generate a new unique room code
-            game = GameManager(code) #allows the game object to be created with the new room code
-            self.games[code] = game  #stores the new game object in the games dictionary with the room code as the key
-            return game   #returns the newly created game object
+        with self.lock:
+            code = self._new_code()
+            game = GameManager(code)
+            self.games[code] = game
+            return game
 
     def _new_code(self):
         while True:
