@@ -30,7 +30,7 @@ let pendingPos = null, myPos = null, target = null, mouse = null;
 let reveal = null, t0 = 0, resolved = false, parts = [], shake = 0;
 let placeDeadline = null, roundDeadline = null, lastSec = -1;   // countdowns
 
-// ---------- the shrinking arena ----------
+// the shrinking arena 
 const area = (a) => (a[2] - a[0]) * (a[3] - a[1]);
 function curArena(now) {
   const k = Math.min(1, (now - arenaT0) / 700);
@@ -52,7 +52,7 @@ function clampAim(p) {   // where you can aim
   return [Math.min(Math.max(p[0], x0), x1), Math.min(Math.max(p[1], y0), y1)];
 }
 
-// ---------- small UI helpers ----------
+// small UI helpers 
 function setMsg(text) { $("msg").textContent = text; }
 
 // the players list on the left: colour, name and a sign (READY / NOT READY / PLAYING / ELIMINATED / WINNER)
@@ -112,7 +112,7 @@ function aimHint() {
                : "Move your mouse to aim, press ENTER to fire. Click to move your spot!";
 }
 
-// ---------- invite link: opening ?room=ABCD fills the room code in ----------
+// invite link: opening ?room=ABCD fills the room code in 
 const inviteCode = (new URLSearchParams(location.search).get("room") || "").toUpperCase().slice(0, 4);
 if (inviteCode) {
   $("code").value = inviteCode;
@@ -135,12 +135,12 @@ function copyText(text, note) {
   else fallback();
 }
 
-// ---------- lobby buttons ----------
+//  lobby buttons 
 $("create").onclick = () => { Sound.unlock(); socket.emit("create_room", { name: $("name").value }); };
 $("join").onclick = () => { Sound.unlock(); socket.emit("join_game", { name: $("name").value, code: $("code").value }); };
 $("code").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase(); });
 
-// ---------- actions ----------
+// actions 
 function fire() {
   if (phase !== "aim" || !myPos) return;
   if (!mouse) { setMsg(TOUCH ? "Touch the arena to aim first!" : "Move your mouse over the arena to aim first!"); return; }
@@ -189,7 +189,7 @@ addEventListener("keydown", (e) => {
   }
 });
 
-// ---------- mouse: click to stand somewhere (click again to move), move the mouse to aim ----------
+//  mouse: click to stand somewhere (click again to move), move the mouse to aim 
 function pos(e) {
   const r = cv.getBoundingClientRect();
   return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H];
@@ -206,7 +206,7 @@ cv.addEventListener("pointerdown", (e) => {
   }
 });
 
-// ---------- the eliminated banner and the winner screen ----------
+// the eliminated banner and the winner screen 
 function showElim() {
   $("elim").hidden = false;
   $("spec").hidden = false;
@@ -224,7 +224,7 @@ function showEnd(winner, name) {
   renderButtons();
 }
 
-// ---------- messages from the server ----------
+// messages from the server 
 socket.on("room_joined", (d) => {
   slot = d.slot;
   roomCode = d.code;
@@ -343,7 +343,7 @@ socket.on("error_msg", (d) => {
   setMsg(d.message);
 });
 
-// ---------- drawing ----------
+//  drawing 
 function sprite(x, y, body, bob) {
   SPR.forEach((row, r) => {
     [...row].forEach((ch, c) => {
