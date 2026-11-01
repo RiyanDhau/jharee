@@ -1,7 +1,3 @@
-// Vexel, browser side. All secret information stays on the server:
-// this page only ever knows your own position until the reveal arrives.
-// Keep W, H, MIN_AIM and MARGIN in sync with constants.py (ARENA_W, ARENA_H, MIN_AIM_DISTANCE, EDGE_MARGIN).
-
 const W = 640, H = 360, TILE = 40, MIN_AIM = 14, MARGIN = 16, PX = 3;
 const BASE_COLORS = [
   { body: "#3b8cff", beam: "#2dc4ff" },   // slot 0: blue
